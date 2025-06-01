@@ -1,260 +1,250 @@
-from dotenv import load_dotenv
-load_dotenv()  # Загружает переменные из .env
 import os
+import asyncio
+import shutil
 import logging
-import aiohttp
-import hashlib
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse
+from aiogram.enums import ParseMode
+from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup
+from dotenv import load_dotenv
+from utils import get_models_list, get_examples_list, is_processing, notify_admin, baserow, supabase, create_payment_link
 
-# Настройка логгирования
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Загрузка переменных окружения
+load_dotenv()
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+UPLOAD_DIR = "uploads"
+MODELS_BUCKET = "models"
+SUPPORTED_EXTENSIONS = [".jpg", ".jpeg", ".png"]
+EXEMPT_USER_IDS = [973853935, 6320348591]
+FREE_TRY_COUNT = 1
+
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
+
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Проверка загрузки переменных окружения
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') or os.getenv('BOT_TOKEN')
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("Не найден TELEGRAM_BOT_TOKEN в переменных окружения")
+MODELS_PER_PAGE = 3
 
-# Инициализация бота и диспетчера
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
-dp = Dispatcher()
-app = FastAPI()
+@dp.message(F.text)
+async def welcome(message: types.Message):
+    user = message.from_user
+    user_id = user.id
+    username = user.username or "unknown"
+    
+    os.makedirs(os.path.join(UPLOAD_DIR, str(user_id)), exist_ok=True)
 
-# Конфигурация платежей
-YOOMONEY_WALLET = "4100118715530282"  # Ваш номер кошелька ЮMoney
-YOOMONEY_SECRET = os.getenv('YOOMONEY_SECRET')  # Секретный ключ из настроек ЮMoney
-PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
-TRIES_PER_PAYMENT = 5  # Количество примерок за одну оплату
-FREE_USER_IDS = {973853935, 6320348591}  # ID пользователей с бесплатным доступом
-
-class BaserowAPI:
-    def __init__(self, base_url: str, token: str):
-        self.base_url = base_url
-        self.headers = {"Authorization": f"Token {token}"}
-    
-    async def upsert_row(self, user_id: int, username: str, update_data: dict):
-        """Обновляет или создает запись пользователя"""
-        url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self.headers) as resp:
-                data = await resp.json()
-                
-                if data.get("results"):
-                    row_id = data["results"][0]["id"]
-                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
-                    async with session.patch(update_url, json=update_data, headers=self.headers) as update_resp:
-                        return await update_resp.json()
-                else:
-                    new_data = {"user_id": user_id, "username": username, **update_data}
-                    async with session.post(self.base_url, json=new_data, headers=self.headers) as create_resp:
-                        return await create_resp.json()
-    
-    async def get_user_tries(self, user_id: int) -> dict:
-        """Получает данные о примерках пользователя"""
-        url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self.headers) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    if data.get("results"):
-                        return {
-                            "free_tries": data["results"][0].get("free_tries", 1),
-                            "paid_tries": data["results"][0].get("paid_tries", 0),
-                            "total_payments": data["results"][0].get("total_payments", 0)
-                        }
-        return {"free_tries": 1, "paid_tries": 0, "total_payments": 0}
-    
-    async def update_tries(self, user_id: int, username: str = "", free_tries: int = None, paid_tries: int = None, payment_amount: float = None):
-        """Обновляет счётчики примерок и платежей"""
-        update_data = {}
-        if free_tries is not None:
-            update_data["free_tries"] = free_tries
-        if paid_tries is not None:
-            update_data["paid_tries"] = paid_tries
-        if payment_amount is not None:
-            update_data["total_payments"] = payment_amount
-        
-        await self.upsert_row(user_id, username, update_data)
-
-# Инициализация Baserow API
-baserow = BaserowAPI(
-    base_url=f"https://api.baserow.io/api/database/rows/table/{os.getenv('TABLE_ID', '12345')}/",
-    token=os.getenv('BASEROW_TOKEN', 'your_baserow_token')
-)
-
-async def check_payment_required(user_id: int) -> bool:
-    """Проверяет, требуется ли оплата для пользователя"""
-    if user_id in FREE_USER_IDS:
-        return False
-    
-    tries = await baserow.get_user_tries(user_id)
-    return tries["free_tries"] <= 0 and tries["paid_tries"] <= 0
-
-async def send_payment_request(user_id: int, message: types.Message = None):
-    """Отправляет запрос на оплату"""
-    payment_url = f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YOOMONEY_WALLET}&quickpay-form=small&sum={PRICE_PER_TRY}&label={user_id}&targets=Оплата%20примерки"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"💳 Оплатить {PRICE_PER_TRY}₽", url=payment_url)],
-        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data="check_payment")]
-    ])
-    
-    text = (
-        "Спасибо, что воспользовались нашей виртуальной примерочной!\n\n"
-        "Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку. "
-        "Сумма символическая, чтобы и Вам помочь стать красивыми и окупанию проекта."
+    await bot.send_media_group(
+        chat_id=user_id,
+        media=[
+            types.InputMediaPhoto(media=FSInputFile("assets/cover1.jpg")),
+            types.InputMediaPhoto(media=FSInputFile("assets/cover2.jpg")),
+            types.InputMediaPhoto(media=FSInputFile("assets/cover3.jpg"))
+        ]
     )
-    
-    if message:
-        await message.answer(text, reply_markup=keyboard)
-    else:
-        await bot.send_message(user_id, text, reply_markup=keyboard)
 
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or ""
-    full_name = message.from_user.full_name or ""
-    
-    await baserow.upsert_row(user_id, username, {"full_name": full_name})
-    
-    if await check_payment_required(user_id):
-        await send_payment_request(user_id, message)
+    await bot.send_message(
+        user_id,
+        "👋 Добро пожаловать в виртуальную примерочную!\n\n"
+        "1️⃣ Отправьте фото одежды.\n"
+        "2️⃣ Затем выберите модель или отправьте фото человека.\n\n"
+        "👗 Начнем? Просто пришлите фото."
+    )
+
+@dp.callback_query(F.data.startswith("models_"))
+async def show_models(callback_query: types.CallbackQuery):
+    try:
+        _, category, page = callback_query.data.split("_")
+        page = int(page)
+    except:
+        await callback_query.answer("Ошибка запроса")
         return
+
+    category_names = {
+        "man": "👨 Мужские модели",
+        "woman": "👩 Женские модели", 
+        "child": "🧒 Детские модели"
+    }
     
-    tries = await baserow.get_user_tries(user_id)
-    if tries["free_tries"] == 1:
-        await message.answer(
-            "Добро пожаловать в виртуальную примерочную!\n\n"
-            "Вам доступна 1 бесплатная примерка. После этого каждая примерка будет стоить 30 рублей."
-        )
-    else:
-        remaining_tries = tries["paid_tries"] if tries["free_tries"] <= 0 else tries["free_tries"]
-        await message.answer(
-            f"С возвращением! У вас осталось {remaining_tries} примерок."
-        )
+    try:
+        models = await get_models_list(category)
+        if not models:
+            await callback_query.message.answer("❌ В данной категории пока нет доступных моделей.")
+            return
+
+        start_idx = page * MODELS_PER_PAGE
+        end_idx = start_idx + MODELS_PER_PAGE
+        current_models = models[start_idx:end_idx]
+
+        if page == 0:
+            await callback_query.message.answer(f"{category_names.get(category, 'Модели')}:")
+
+        for model in current_models:
+            model_name = os.path.splitext(model)[0]
+            image_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{category}/{model}")
+            await bot.send_photo(
+                chat_id=callback_query.from_user.id,
+                photo=image_url,
+                caption=f"Модель: {model_name}",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="✅ Выбрать эту модель", callback_data=f"model_{category}/{model}")]]
+                )
+            )
+
+        if end_idx < len(models):
+            await callback_query.message.answer(
+                "Показать еще модели?",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="⬇️ Показать еще", callback_data=f"models_{category}_{page + 1}")]]
+                )
+            )
+        else:
+            await callback_query.message.answer("✅ Это все доступные модели в данной категории.")
+
+    except Exception as e:
+        logger.error(f"Error in show_models: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
 
 @dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    
-    if await check_payment_required(user_id):
-        await send_payment_request(user_id, callback_query.message)
-        await callback_query.answer()
+    if await is_processing(callback_query.from_user.id):
+        await callback_query.answer("✅ Ожидайте результат!", show_alert=True)
         return
-    
-    tries = await baserow.get_user_tries(user_id)
-    if tries["free_tries"] > 0:
-        await baserow.update_tries(user_id, free_tries=tries["free_tries"]-1)
-    else:
-        await baserow.update_tries(user_id, paid_tries=tries["paid_tries"]-1)
-    
+
     model_path = callback_query.data.replace("model_", "")
-    await callback_query.message.answer(f"Вы выбрали модель: {model_path}")
-    await callback_query.answer()
-
-def verify_webhook(data: dict, secret: str) -> bool:
-    """Проверяет подпись уведомления от ЮMoney"""
-    params = [
-        data.get('notification_type'),
-        data.get('operation_id'),
-        data.get('amount'),
-        data.get('currency'),
-        data.get('datetime'),
-        data.get('sender'),
-        data.get('codepro'),
-        secret,
-        data.get('label')
-    ]
-    hash_str = '&'.join(str(param) for param in params)
-    sha1 = hashlib.sha1(hash_str.encode()).hexdigest()
-    return sha1 == data.get('sha1_hash')
-
-@app.post('/payment_webhook')
-async def payment_webhook(request: Request):
-    """Обработчик вебхука для подтверждения платежей"""
-    try:
-        data = await request.form()
-        data = dict(data)
-        
-        if not verify_webhook(data, YOOMONEY_SECRET):
-            raise HTTPException(status_code=403, detail="Invalid signature")
-        
-        user_id = int(data.get('label'))
-        amount = float(data.get('amount'))
-        
-        added_tries = int(amount // PRICE_PER_TRY) * TRIES_PER_PAYMENT
-        await baserow.update_tries(
-            user_id=user_id,
-            paid_tries=added_tries,
-            payment_amount=amount
-        )
-        
-        await bot.send_message(
-            user_id,
-            f"✅ Оплата получена! Вам доступно {added_tries} примерок.\n"
-            "Можете продолжать использование бота."
-        )
-        
-        return JSONResponse(content={"status": "ok"})
-    except Exception as e:
-        logger.error(f"Payment webhook error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
-
-@dp.callback_query(F.data == "check_payment")
-async def check_payment(callback_query: types.CallbackQuery):
+    category, model_name = model_path.split('/')
     user_id = callback_query.from_user.id
-    tries = await baserow.get_user_tries(user_id)
-    
-    if tries["paid_tries"] > 0:
-        await callback_query.answer("✅ Оплата подтверждена! Можете продолжать.", show_alert=True)
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+
+    await callback_query.message.delete()
+
+    clothes_photo_exists = any(f.startswith("photo_1") for f in os.listdir(user_dir))
+
+    model_display_name = os.path.splitext(model_name)[0]
+
+    await baserow.upsert_row(user_id, callback_query.from_user.username, {
+        "model_selected": model_path,
+        "status": "model_selected"
+    })
+
+    model_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(model_path)
+    model_local_path = os.path.join(user_dir, "selected_model.jpg")
+
+    res = supabase.storage.from_(MODELS_BUCKET).download(model_path)
+    with open(model_local_path, 'wb') as f:
+        f.write(res)
+
+    if clothes_photo_exists:
+        await baserow.upsert_row(user_id, callback_query.from_user.username, {
+            "photo_person": True,
+            "status": "В обработке",
+            "photo1_received": True,
+            "photo2_received": True
+        })
+        await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
+        await bot.send_photo(user_id, photo=model_url, caption=f"✅ Модель {model_display_name} выбрана.\n\n🔄 Идёт примерка. Ожидайте результат!")
+    else:
+        await baserow.upsert_row(user_id, callback_query.from_user.username, {
+            "photo1_received": False,
+            "photo2_received": True
+        })
+        await bot.send_photo(user_id, photo=model_url, caption=f"✅ Модель {model_display_name} выбрана.\n\n📸 Теперь отправьте фото одежды.")
+
+@dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "unknown"
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+
+    existing_photos = [f for f in os.listdir(user_dir) if f.startswith("photo_")]
+    photo_number = len(existing_photos) + 1
+
+    if photo_number > 2:
+        await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
         return
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Проверить ещё раз", callback_data="check_payment")]
-    ])
-    
-    await callback_query.message.answer(
-        "Если вы уже оплатили, но доступ не открылся, пожалуйста, подождите 1-2 минуты.\n"
-        "Если прошло больше времени, свяжитесь с поддержкой.",
-        reply_markup=keyboard
-    )
-    await callback_query.answer()
 
-async def setup_webhook():
-    """Установка вебхука при запуске"""
-    try:
-        from pyngrok import ngrok
-        http_tunnel = ngrok.connect(8000)
-        webhook_url = f"{http_tunnel.public_url}/payment_webhook"
-        logger.info(f"Ngrok tunnel created: {webhook_url}")
-        
-        # Установка вебхука
-        await bot.set_webhook(webhook_url)
-        logger.info("Webhook set successfully")
-    except Exception as e:
-        logger.error(f"Failed to setup webhook: {e}")
+    file = message.photo[-1]
+    file_name = f"photo_{photo_number}.jpg"
+    file_path = os.path.join(user_dir, file_name)
+    await bot.download(file, destination=file_path)
 
-@app.on_event("startup")
-async def on_startup():
-    logger.info("Starting up...")
-    await setup_webhook()
+    model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
+    first_photo_exists = photo_number == 2
+
+    if photo_number == 2 and not model_selected:
+        await baserow.upsert_row(user_id, username, {
+            "photo_person": True,
+            "status": "В обработке",
+            "photo1_received": True,
+            "photo2_received": True
+        })
+        await notify_admin(f"📸 Новые фото от @{username} ({user_id})")
+        await message.answer("✅ Оба файла получены.\n\n🔄 Идёт примерка. Ожидайте результат!")
+        return
+
+    if photo_number == 1:
+        await baserow.upsert_row(user_id, username, {
+            "photo_clothes": True,
+            "status": "Ожидается второе фото",
+            "photo1_received": True,
+            "photo2_received": False
+        })
+        await message.answer("✅ Фото одежды получено.\n\nТеперь выберите модель или отправьте фото человека.")
+
+async def check_results():
+    while True:
+        try:
+            for user_id in os.listdir(UPLOAD_DIR):
+                user_dir = os.path.join(UPLOAD_DIR, user_id)
+                if not os.path.isdir(user_dir):
+                    continue
+
+                for ext in SUPPORTED_EXTENSIONS:
+                    result_path = os.path.join(user_dir, f"result{ext}")
+                    if os.path.exists(result_path):
+                        await bot.send_photo(
+                            chat_id=int(user_id),
+                            photo=FSInputFile(result_path),
+                            caption="🎉 Ваша виртуальная примерка готова!\n👚 Хотите ещё примерку? Просто отправьте новое фото."
+                        )
+
+                        await baserow.upsert_row(int(user_id), "", {
+                            "status": "Результат отправлен",
+                            "result_sent": True,
+                            "ready": True,
+                            "photo1_received": False,
+                            "photo2_received": False
+                        })
+
+                        shutil.rmtree(user_dir)
+                        logger.info(f"Result sent to {user_id}")
+
+        except Exception as e:
+            logger.error(f"Error in check_results: {e}")
+
+        await asyncio.sleep(10)
+
+async def main():
+    logger.info("Starting bot...")
+
+    if supabase:
+        for category in ["man", "woman", "child"]:
+            try:
+                models = await get_models_list(category)
+                logger.info(f"Loaded {len(models)} models for {category}")
+            except Exception as e:
+                logger.warning(f"No models for {category}: {e}")
+
+    asyncio.create_task(check_results())
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    import uvicorn
-    
-    # Проверка всех необходимых переменных
-    required_vars = ['TELEGRAM_BOT_TOKEN', 'BASEROW_TOKEN', 'YOOMONEY_SECRET']
-    for var in required_vars:
-        if not os.getenv(var):
-            logger.error(f"Необходимо установить переменную окружения: {var}")
-            exit(1)
-    
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Bot stopped")
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
