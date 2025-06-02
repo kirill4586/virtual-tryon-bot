@@ -3,6 +3,15 @@ import logging
 import asyncio
 import aiohttp
 import shutil
+import sys
+import sys
+if sys.platform == "linux":
+    import fcntl
+    try:
+        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Another instance is already running. Exiting.")
+        sys.exit(1)
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
