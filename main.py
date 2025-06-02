@@ -863,7 +863,7 @@ async def check_results():
                         shutil.rmtree(user_dir)
                         logger.info(f"Результат отправлен пользователю {user_id}")
                         
-                      except Exception as e:
+                    except Exception as e:
                         logger.error(f"Error sending result to {user_id}: {e}")
                         
         except Exception as e:
