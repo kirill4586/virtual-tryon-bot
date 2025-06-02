@@ -201,7 +201,86 @@ async def is_processing(user_id: int) -> bool:
         logger.error(f"Error in is_processing: {e}")
         return False
 
-# Остальной код остается таким же, за исключением изменений в обработчиках файлов:
+async def get_user_tries(user_id: int) -> int:
+    """Возвращает количество оставшихся попыток"""
+    # Временная реализация - всегда возвращаем 1 для теста
+    return 1
+
+async def update_user_tries(user_id: int, tries: int):
+    """Обновляет количество попыток пользователя"""
+    pass
+
+async def notify_admin(message: str):
+    """Отправляет уведомление администратору"""
+    if ADMIN_CHAT_ID:
+        try:
+            await bot.send_message(ADMIN_CHAT_ID, message)
+        except Exception as e:
+            logger.error(f"Error sending admin notification: {e}")
+
+# ===================== ОБРАБОТЧИКИ КОМАНД =====================
+
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    """Обработчик команды /start"""
+    user = message.from_user
+    await baserow.upsert_row(user.id, user.username, {
+        "status": "Бот запущен",
+        "first_start": True
+    })
+    
+    welcome_text = (
+        "👋 Добро пожаловать в бота для виртуальной примерки одежды!\n\n"
+        "📸 Чтобы начать, отправьте:\n"
+        "1. Фото одежды (на вешалке или без)\n"
+        "2. Фото человека или выберите модель из каталога\n\n"
+        "🔄 После загрузки двух фото бот сделает виртуальную примерку!"
+    )
+    
+    await message.answer(welcome_text)
+
+@dp.message(Command("help"))
+async def cmd_help(message: Message):
+    """Обработчик команды /help"""
+    help_text = (
+        "ℹ️ <b>Как пользоваться ботом:</b>\n\n"
+        "1. Отправьте фото одежды (на вешалке или без фона)\n"
+        "2. Отправьте фото человека или выберите модель\n"
+        "3. Получите результат виртуальной примерки!\n\n"
+        "🛠 Если возникли проблемы - @support"
+    )
+    await message.answer(help_text, parse_mode=ParseMode.HTML)
+
+@dp.message(Command("models"))
+async def cmd_models(message: Message):
+    """Показывает доступные модели"""
+    try:
+        # Получаем список моделей из Supabase Storage
+        models = supabase.storage.from_(MODELS_BUCKET).list()
+        
+        if not models:
+            await message.answer("😕 Модели временно недоступны. Попробуйте позже.")
+            return
+            
+        # Создаем клавиатуру с моделями
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        
+        for model in models[:MODELS_PER_PAGE]:
+            model_name = os.path.splitext(model['name'])[0]
+            callback_data = f"model_{MODELS_BUCKET}/{model['name']}"
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=model_name, callback_data=callback_data)
+            ])
+        
+        await message.answer(
+            "👗 Выберите модель для примерки:",
+            reply_markup=keyboard
+        )
+    except Exception as e:
+        logger.error(f"Error showing models: {e}")
+        await message.answer("❌ Ошибка при загрузке моделей. Попробуйте позже.")
+
+# ===================== ОБРАБОТЧИКИ СООБЩЕНИЙ =====================
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
@@ -220,7 +299,7 @@ async def handle_photo(message: types.Message):
         # Если попыток нет, предлагаем оплатить
         if tries_left <= 0:
             payment_label = f"tryon_{user_id}"
-            payment_link = await PaymentManager.create_payment_link(PRICE_PER_TRY, payment_label)
+            payment_link = f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YMONEY_WALLET}&quickpay-form=small&targets={payment_label}&sum={PRICE_PER_TRY}&label={payment_label}"
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💳 Оплатить 30 руб", url=payment_link)],
@@ -317,6 +396,8 @@ async def process_photo(message: types.Message, user: types.User):
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
+# ===================== ОБРАБОТЧИКИ КНОПОК =====================
+
 @dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
     if await is_processing(callback_query.from_user.id):
@@ -394,7 +475,31 @@ async def model_selected(callback_query: types.CallbackQuery):
             "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
         )
 
+@dp.callback_query(F.data.startswith("check_payment_"))
+async def check_payment(callback_query: types.CallbackQuery):
+    """Проверяет оплату и обновляет количество попыток"""
+    payment_label = callback_query.data.replace("check_payment_", "")
+    user_id = callback_query.from_user.id
+    
+    try:
+        # Здесь должна быть проверка оплаты через YooMoney API
+        # Временно имитируем успешную оплату
+        payment_success = True
+        
+        if payment_success:
+            await callback_query.answer("✅ Оплата подтверждена! Попытки добавлены.", show_alert=True)
+            await update_user_tries(user_id, 1)  # Добавляем 1 попытку
+            await callback_query.message.delete()
+        else:
+            await callback_query.answer("❌ Оплата не найдена. Попробуйте позже.", show_alert=True)
+    except Exception as e:
+        logger.error(f"Error checking payment: {e}")
+        await callback_query.answer("⚠️ Ошибка проверки оплаты. Попробуйте позже.", show_alert=True)
+
+# ===================== ФОНОВЫЕ ЗАДАЧИ =====================
+
 async def check_results():
+    """Проверяет готовые результаты в Supabase и отправляет пользователям"""
     while True:
         try:
             # Получаем список всех пользовательских папок в Supabase
@@ -415,16 +520,14 @@ async def check_results():
                         await bot.send_photo(
                             chat_id=int(user_id),
                             photo=result_data,
-                            caption="🎉 Ваша виртуальная примерка готова!     👚Если хотите ещё примерить напишите любое сообщение"
+                            caption="🎉 Ваша виртуальная примерка готова!\n\n👚 Если хотите ещё примерить, отправьте новое фото"
                         )
                         
-                        # Устанавливаем флаг ready и сбрасываем остальные
+                        # Обновляем статус
                         await baserow.upsert_row(int(user_id), "", {
                             "status": "Результат отправлен",
                             "result_sent": True,
-                            "ready": True,
-                            "photo1_received": False,
-                            "photo2_received": False
+                            "ready": True
                         })
                         
                         # Удаляем файлы пользователя
@@ -439,4 +542,24 @@ async def check_results():
         
         await asyncio.sleep(10)
 
-# Остальной код остается без изменений
+# ===================== ЗАПУСК БОТА =====================
+
+async def on_startup():
+    """Действия при запуске бота"""
+    logger.info("Bot started")
+    asyncio.create_task(check_results())  # Запускаем фоновую задачу
+
+async def on_shutdown():
+    """Действия при остановке бота"""
+    logger.info("Bot stopped")
+
+async def main():
+    # Устанавливаем обработчики запуска/остановки
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
+    
+    # Запускаем бота
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
