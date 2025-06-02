@@ -829,29 +829,45 @@ async def check_payment(callback_query: types.CallbackQuery):
 async def check_results():
     while True:
         try:
-            for user_id in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+            if not os.path.exists(UPLOAD_DIR):
+                await asyncio.sleep(10)
+                continue
+
+            for user_id_str in os.listdir(UPLOAD_DIR):
+                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
                 if not os.path.isdir(user_dir):
                     continue
-                
+
+                # Ищем файл результата
                 result_file = None
                 for ext in SUPPORTED_EXTENSIONS:
                     test_path = os.path.join(user_dir, f"result{ext}")
                     if os.path.exists(test_path):
                         result_file = test_path
                         break
-                
+
                 if result_file:
                     try:
+                        user_id = int(user_id_str)
+                        
+                        # 1. Отправляем результат клиенту
                         await bot.send_photo(
-                            chat_id=int(user_id),
+                            chat_id=user_id,
                             photo=FSInputFile(result_file),
-                            caption="🎉 Ваша виртуальная примерка готова! 👚Если хотите ещё примерить напишите любое сообщение"
+                            caption="🎉 Ваша виртуальная примерка готова!\nЕсли хотите ещё примерить, напишите любое сообщение"
                         )
                         
-                        await upload_to_supabase(result_file, int(user_id), "results")
+                        # 2. Загружаем в Supabase Storage
+                        supabase_path = f"{user_id}/photos/result{os.path.splitext(result_file)[1]}"
+                        with open(result_file, 'rb') as f:
+                            supabase.storage.from_(UPLOADS_BUCKET).upload(
+                                path=supabase_path,
+                                file=f,
+                                file_options={"content-type": "image/jpeg"}
+                            )
                         
-                        await baserow.upsert_row(int(user_id), "", {
+                        # 3. Обновляем статус в базе данных
+                        await baserow.upsert_row(user_id, "", {
                             "status": "Результат отправлен",
                             "result_sent": True,
                             "ready": True,
@@ -859,15 +875,24 @@ async def check_results():
                             "photo2_received": False
                         })
                         
+                        # 4. Очищаем локальную директорию
                         shutil.rmtree(user_dir)
-                        logger.info(f"Результат отправлен пользователю {user_id}")
+                        logger.info(f"Результат отправлен пользователю {user_id} и сохранен в Supabase")
                         
                     except Exception as e:
-                        logger.error(f"Error sending result to {user_id}: {e}")
-                        
+                        logger.error(f"Ошибка обработки результата для {user_id}: {str(e)}")
+                        try:
+                            # Попытка отправить сообщение об ошибке пользователю
+                            await bot.send_message(
+                                chat_id=user_id,
+                                text="⚠️ Произошла ошибка при обработке вашего результата. Пожалуйста, попробуйте ещё раз."
+                            )
+                        except:
+                            pass
+
         except Exception as e:
-            logger.error(f"Error in results watcher: {e}")
-        
+            logger.error(f"Ошибка в check_results: {str(e)}")
+
         await asyncio.sleep(10)
 
 async def handle(request):
