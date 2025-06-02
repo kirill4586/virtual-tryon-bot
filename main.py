@@ -912,52 +912,32 @@ async def start_web_server():
     logger.info("Web server started")
 
 async def main():
-    try:
-        logger.info("Starting bot...")
-        
-        # Запуск веб-сервера для Render
-        asyncio.create_task(start_web_server())
-        
-        if supabase:
-            try:
-                # Проверяем доступность моделей и примеров
-                for category in ["man", "woman", "child"]:
-                    models = await get_models_list(category)
-                    logger.info(f"Available {category} models count: {len(models)}")
-                
-                examples = await get_examples_list()
-                logger.info(f"Available examples count: {len(examples)}")
-            except Exception as e:
-                logger.error(f"Supabase check failed: {e}")
-        
-        asyncio.create_task(check_results())
-        
-        await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
-        
-    except asyncio.CancelledError:
-        logger.info("Main task cancelled")
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
+    logger.info("Starting bot...")
+    
+    # Запуск веб-сервера для Render
+    asyncio.create_task(start_web_server())
+    
+    if supabase:
+        try:
+            # Проверяем доступность моделей и примеров
+            for category in ["man", "woman", "child"]:
+                models = await get_models_list(category)
+                logger.info(f"Available {category} models count: {len(models)}")
+            
+            examples = await get_examples_list()
+            logger.info(f"Available examples count: {len(examples)}")
+        except Exception as e:
+            logger.error(f"Supabase check failed: {e}")
+    
+    asyncio.create_task(check_results())
+    
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     try:
-        # Создаем новый event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Запускаем основную функцию
-        loop.run_until_complete(main())
-        
+        asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot stopped by keyboard interrupt")
-        
+        logger.info("Bot stopped")
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
-        
-    finally:
-        # Всегда выполняем graceful shutdown
-        loop.run_until_complete(on_shutdown())
-        loop.close()
-        logger.info("Bot successfully shut down")
