@@ -44,7 +44,7 @@ UPLOAD_DIR = "uploads"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 buckets = supabase.storage.list_buckets()
 if UPLOAD_BUCKET not in [b.name for b in buckets]:
-    supabase.storage.create_bucket(UPLOAD_BUCKET, public=True)
+    supabase.storage.create_bucket(UPLOAD_BUCKET)
 
 # Инициализация бота
 bot = Bot(
