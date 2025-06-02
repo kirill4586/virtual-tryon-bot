@@ -931,8 +931,11 @@ async def main():
         
         asyncio.create_task(check_results())
         
+        # Удаляем веб-хук (если был) и переключаемся на поллинг
         await bot.delete_webhook(drop_pending_updates=True)
-        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+        
+        # Используем skip_updates=True, чтобы пропустить старые обновления
+        await dp.start_polling(bot, skip_updates=True)
         
     except asyncio.CancelledError:
         logger.info("Main task cancelled")
