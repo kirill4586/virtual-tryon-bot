@@ -918,47 +918,53 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
     await site.start()
     logger.info("Web server started")
+	async def on_shutdown():
+    logger.info("Shutting down...")
+    await bot.delete_webhook()  # Удаляем вебхук при завершении
+    logger.info("Webhook removed")
+    # Дополнительные действия при завершении (если нужны)
 
 async def main():
     try:
         logger.info("Starting bot...")
         
-        # Запуск веб-сервера для Render
-        asyncio.create_task(start_web_server())
+        # Запуск веб-сервера
+        app = setup_web_server()
+        runner = web.AppRunner(app)
+        await runner.setup()
         
-        if supabase:
-            try:
-                # Проверяем доступность моделей и примеров
-                for category in ["man", "woman", "child"]:
-                    models = await get_models_list(category)
-                    logger.info(f"Available {category} models count: {len(models)}")
-                
-                examples = await get_examples_list()
-                logger.info(f"Available examples count: {len(examples)}")
-            except Exception as e:
-                logger.error(f"Supabase check failed: {e}")
+        # Получаем URL вебхука (на Render он будет вида https://your-service.onrender.com)
+        webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
         
+        # Устанавливаем вебхук
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+        )
+        logger.info(f"Webhook set to: {webhook_url}")
+        
+        # Запускаем веб-сервер
+        site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
+        await site.start()
+        logger.info("Web server started")
+        
+        # Запускаем фоновую задачу проверки результатов
         asyncio.create_task(check_results())
         
-        # Удаляем веб-хук (если был) и переключаемся на поллинг
-        await bot.delete_webhook(drop_pending_updates=True)
-        
-        # Используем skip_updates=True, чтобы пропустить старые обновления
-        await dp.start_polling(bot, skip_updates=True)
-        
-    except asyncio.CancelledError:
-        logger.info("Main task cancelled")
+        # Бесконечный цикл (чтобы бот не завершался)
+        while True:
+            await asyncio.sleep(3600)  # Просто ждём, пока сервер работает
+            
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
 
 if __name__ == "__main__":
     try:
-        # Создаем новый event loop
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         
-        # Запускаем основную функцию
+        # Запуск main() с обработкой завершения
         loop.run_until_complete(main())
         
     except KeyboardInterrupt:
@@ -968,7 +974,7 @@ if __name__ == "__main__":
         logger.critical(f"Fatal error: {e}")
         
     finally:
-        # Всегда выполняем graceful shutdown
+        # Всегда вызываем on_shutdown() перед выходом
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
