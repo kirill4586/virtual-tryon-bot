@@ -908,11 +908,22 @@ async def handle(request):
 
 def setup_web_server():
     app = web.Application()
-    app.router.add_get('/', handle)  # Для проверки работоспособности
     
-    # Добавьте этот обработчик (важнейшая строка!)
-    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', dp.update)
+    async def handle(request):
+        return web.Response(text="Bot is running")
     
+    async def webhook_handler(request):
+        try:
+            # Получаем обновление от Telegram
+            update = await request.json()
+            await dp.feed_webhook_update(bot, update)
+            return web.Response(text="OK")
+        except Exception as e:
+            logger.error(f"Webhook error: {e}")
+            return web.Response(status=500, text="Internal Server Error")
+    
+    app.router.add_get('/', handle)
+    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
     return app
 
 async def start_web_server():
