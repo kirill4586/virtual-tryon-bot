@@ -46,6 +46,7 @@ FREE_USERS = {6320348591, 973853935}  # Пользователи с беспла
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "primery"
+UPLOADS_BUCKET = "uploads"  # Бакет для загружаемых файлов
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
@@ -70,9 +71,51 @@ try:
         logger.error(f"Bucket '{MODELS_BUCKET}' not found in Supabase storage")
     if EXAMPLES_BUCKET not in [b.name for b in buckets]:
         logger.error(f"Bucket '{EXAMPLES_BUCKET}' not found in Supabase storage")
+    if UPLOADS_BUCKET not in [b.name for b in buckets]:
+        logger.error(f"Bucket '{UPLOADS_BUCKET}' not found in Supabase storage")
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     supabase = None
+
+async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
+    """Загружает файл в Supabase Storage"""
+    if not supabase:
+        return False
+    
+    try:
+        file_name = os.path.basename(file_path)
+        destination_path = f"{user_id}/{file_type}/{file_name}"
+        
+        with open(file_path, 'rb') as f:
+            res = supabase.storage.from_(UPLOADS_BUCKET).upload(
+                path=destination_path,
+                file=f,
+                file_options={"content-type": "image/jpeg"}
+            )
+        
+        logger.info(f"File {file_path} uploaded to Supabase as {destination_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error uploading file to Supabase: {e}")
+        return False
+
+async def download_from_supabase(user_id: int, file_type: str, file_name: str, local_path: str):
+    """Скачивает файл из Supabase Storage"""
+    if not supabase:
+        return False
+    
+    try:
+        source_path = f"{user_id}/{file_type}/{file_name}"
+        res = supabase.storage.from_(UPLOADS_BUCKET).download(source_path)
+        
+        with open(local_path, 'wb') as f:
+            f.write(res)
+        
+        logger.info(f"File {source_path} downloaded from Supabase to {local_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error downloading file from Supabase: {e}")
+        return False
 
 class BaserowAPI:
     def __init__(self):
@@ -577,6 +620,9 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
+                # Загружаем модель в Supabase в папку uploads
+                await upload_to_supabase(model_path_local, user_id, "models")
+                
                 if clothes_photo_exists:
                     response_text = (
                         f"✅ Модель {model_display_name} выбрана.\n\n"
@@ -694,6 +740,9 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             
             await bot.download(photo, destination=file_path)
             
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
+            
             # Уменьшаем количество попыток
             tries_left = await get_user_tries(user.id)
             if tries_left > 0:
@@ -721,6 +770,9 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             file_path = os.path.join(user_dir, file_name)
             
             await bot.download(photo, destination=file_path)
+            
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
             
             await baserow.upsert_row(user.id, user.username, {
                 "photo_clothes": True,
@@ -795,6 +847,9 @@ async def check_results():
                             photo=FSInputFile(result_file),
                             caption="🎉 Ваша виртуальная примерка готова!     👚Если хотите ещё примерить напишите любое сообщение"
                         )
+                        
+                        # Загружаем результат в Supabase
+                        await upload_to_supabase(result_file, int(user_id), "results")
                         
                         # Устанавливаем флаг ready и сбрасываем остальные
                         await baserow.upsert_row(int(user_id), "", {
