@@ -827,9 +827,12 @@ async def check_payment(callback_query: types.CallbackQuery):
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
 
 async def check_results():
+    logger.info("🔄 Starting check_results() loop...")
     while True:
         try:
+            logger.info("🔍 Scanning for results...")
             if not os.path.exists(UPLOAD_DIR):
+                logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
                 await asyncio.sleep(10)
                 continue
 
@@ -838,27 +841,24 @@ async def check_results():
                 if not os.path.isdir(user_dir):
                     continue
 
-                # Ищем файл результата
-                result_file = None
-                for ext in SUPPORTED_EXTENSIONS:
-                    test_path = os.path.join(user_dir, f"result{ext}")
-                    if os.path.exists(test_path):
-                        result_file = test_path
-                        break
+                logger.info(f"Checking user dir: {user_dir}")
+                result_file = os.path.join(user_dir, "result.jpg")  # или другой формат
 
-                if result_file:
+                if os.path.exists(result_file):
+                    logger.info(f"✅ Found result for user {user_id_str}")
                     try:
                         user_id = int(user_id_str)
                         
-                        # 1. Отправляем результат клиенту
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=FSInputFile(result_file),
-                            caption="🎉 Ваша виртуальная примерка готова!\nЕсли хотите ещё примерить, напишите любое сообщение"
-                        )
+                        # Отправка фото
+                        with open(result_file, 'rb') as photo_file:
+                            await bot.send_photo(
+                                chat_id=user_id,
+                                photo=photo_file,
+                                caption="🎉 Ваша виртуальная примерка готова!"
+                            )
                         
-                        # 2. Загружаем в Supabase Storage
-                        supabase_path = f"{user_id}/photos/result{os.path.splitext(result_file)[1]}"
+                        # Загрузка в Supabase
+                        supabase_path = f"{user_id}/photos/result.jpg"
                         with open(result_file, 'rb') as f:
                             supabase.storage.from_(UPLOADS_BUCKET).upload(
                                 path=supabase_path,
@@ -866,34 +866,31 @@ async def check_results():
                                 file_options={"content-type": "image/jpeg"}
                             )
                         
-                        # 3. Обновляем статус в базе данных
+                        # Обновление статуса
                         await baserow.upsert_row(user_id, "", {
                             "status": "Результат отправлен",
                             "result_sent": True,
-                            "ready": True,
-                            "photo1_received": False,
-                            "photo2_received": False
+                            "ready": True
                         })
                         
-                        # 4. Очищаем локальную директорию
+                        # Очистка папки
                         shutil.rmtree(user_dir)
-                        logger.info(f"Результат отправлен пользователю {user_id} и сохранен в Supabase")
-                        
+                        logger.info(f"✅ Result sent to user {user_id}")
+
                     except Exception as e:
-                        logger.error(f"Ошибка обработки результата для {user_id}: {str(e)}")
+                        logger.error(f"❌ Error processing result for {user_id_str}: {e}")
                         try:
-                            # Попытка отправить сообщение об ошибке пользователю
                             await bot.send_message(
-                                chat_id=user_id,
-                                text="⚠️ Произошла ошибка при обработке вашего результата. Пожалуйста, попробуйте ещё раз."
+                                user_id,
+                                "⚠️ Ошибка при отправке результата. Попробуйте ещё раз."
                             )
                         except:
                             pass
 
         except Exception as e:
-            logger.error(f"Ошибка в check_results: {str(e)}")
+            logger.error(f"❌ Critical error in check_results(): {e}")
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(10)  # Проверка каждые 10 секунд
 
 async def handle(request):
     return web.Response(text="Bot is running")
