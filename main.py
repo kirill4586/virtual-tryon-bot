@@ -48,7 +48,8 @@ if isinstance(buckets_raw, list):
     buckets = buckets_raw
 else:
     buckets = buckets_raw.get('data', [])
-if UPLOAD_BUCKET not in [b['name'] for b in buckets]:
+bucket_names = [b.name for b in buckets]
+if UPLOAD_BUCKET not in bucket_names:
     logger.warning(f"Bucket '{UPLOAD_BUCKET}' не найден. Создайте его вручную в Supabase.")
 
 # Инициализация бота
