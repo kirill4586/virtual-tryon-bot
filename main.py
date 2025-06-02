@@ -827,64 +827,44 @@ async def check_payment(callback_query: types.CallbackQuery):
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
 
 async def check_results():
-    logger.info("Starting results watcher...")
     while True:
         try:
-            if not os.path.exists(UPLOAD_DIR):
-                logger.warning(f"Directory {UPLOAD_DIR} does not exist")
-                await asyncio.sleep(10)
-                continue
-                
-            logger.info(f"Checking directory {UPLOAD_DIR}")
-            for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+            for user_id in os.listdir(UPLOAD_DIR):
+                user_dir = os.path.join(UPLOAD_DIR, str(user_id))
                 if not os.path.isdir(user_dir):
                     continue
                 
-                logger.info(f"Checking user dir: {user_dir}")
                 result_file = None
                 for ext in SUPPORTED_EXTENSIONS:
                     test_path = os.path.join(user_dir, f"result{ext}")
                     if os.path.exists(test_path):
                         result_file = test_path
-                        logger.info(f"Found result file: {result_file}")
                         break
                 
                 if result_file:
                     try:
-                        user_id = int(user_id_str)
-                        logger.info(f"Sending result to user {user_id}")
-                        # ... остальной код отправки ...
-                            # Отправляем результат
-                            await bot.send_photo(
-                                chat_id=user_id,
-                                photo=FSInputFile(result_file),
-                                caption="🎉 Ваша виртуальная примерка готова! 👚 Если хотите ещё примерить, напишите любое сообщение"
-                            )
-                            
-                            # Загружаем результат в Supabase
-                            await upload_to_supabase(result_file, user_id, "results")
-                            
-                            # Обновляем статус в Baserow
-                            await baserow.upsert_row(user_id, "", {
-                                "status": "Результат отправлен",
-                                "result_sent": True,
-                                "ready": True,
-                                "photo1_received": False,
-                                "photo2_received": False
-                            })
-                            
-                            # Удаляем директорию пользователя
-                            shutil.rmtree(user_dir)
-                            logger.info(f"Результат отправлен пользователю {user_id}")
-                            
-                        except Exception as e:
-                            logger.error(f"Error sending result to {user_id_str}: {e}")
-                            # Если не удалось отправить, оставляем файлы для повторной попытки
-                            
-                except Exception as e:
-                    logger.error(f"Error processing user dir {user_id_str}: {e}")
-                    
+                        await bot.send_photo(
+                            chat_id=int(user_id),
+                            photo=FSInputFile(result_file),
+                            caption="🎉 Ваша виртуальная примерка готова! 👚Если хотите ещё примерить напишите любое сообщение"
+                        )
+                        
+                        await upload_to_supabase(result_file, int(user_id), "results")
+                        
+                        await baserow.upsert_row(int(user_id), "", {
+                            "status": "Результат отправлен",
+                            "result_sent": True,
+                            "ready": True,
+                            "photo1_received": False,
+                            "photo2_received": False
+                        })
+                        
+                        shutil.rmtree(user_dir)
+                        logger.info(f"Результат отправлен пользователю {user_id}")
+                        
+                    except Exception as e:
+                        logger.error(f"Error sending result to {user_id}: {e}")
+                        
         except Exception as e:
             logger.error(f"Error in results watcher: {e}")
         
