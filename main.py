@@ -869,7 +869,8 @@ async def check_results():
             logger.error(f"Error in results watcher: {e}")
         
         await asyncio.sleep(10)
-		async def handle(request):
+
+async def handle(request):
     return web.Response(text="Bot is running")
 
 def setup_web_server():
