@@ -828,44 +828,60 @@ async def check_payment(callback_query: types.CallbackQuery):
 async def check_results():
     while True:
         try:
-            for user_id in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, user_id)
-                if not os.path.isdir(user_dir):
-                    continue
+            # Проверяем существование директории
+            if not os.path.exists(UPLOAD_DIR):
+                await asyncio.sleep(10)
+                continue
                 
-                result_file = None
-                for ext in SUPPORTED_EXTENSIONS:
-                    test_path = os.path.join(user_dir, f"result{ext}")
-                    if os.path.exists(test_path):
-                        result_file = test_path
-                        break
-                
-                if result_file:
-                    try:
-                        await bot.send_photo(
-                            chat_id=int(user_id),
-                            photo=FSInputFile(result_file),
-                            caption="🎉 Ваша виртуальная примерка готова!     👚Если хотите ещё примерить напишите любое сообщение"
-                        )
-                        
-                        # Загружаем результат в Supabase
-                        await upload_to_supabase(result_file, int(user_id), "results")
-                        
-                        # Устанавливаем флаг ready и сбрасываем остальные
-                        await baserow.upsert_row(int(user_id), "", {
-                            "status": "Результат отправлен",
-                            "result_sent": True,
-                            "ready": True,
-                            "photo1_received": False,
-                            "photo2_received": False
-                        })
-                        
-                        shutil.rmtree(user_dir)
-                        logger.info(f"Результат отправлен пользователю {user_id}")
-                        
-                    except Exception as e:
-                        logger.error(f"Error sending result to {user_id}: {e}")
-                        
+            for user_id_str in os.listdir(UPLOAD_DIR):
+                try:
+                    user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+                    if not os.path.isdir(user_dir):
+                        continue
+                    
+                    # Ищем файл результата
+                    result_file = None
+                    for ext in SUPPORTED_EXTENSIONS:
+                        test_path = os.path.join(user_dir, f"result{ext}")
+                        if os.path.exists(test_path):
+                            result_file = test_path
+                            break
+                    
+                    if result_file:
+                        try:
+                            # Преобразуем user_id в число
+                            user_id = int(user_id_str)
+                            
+                            # Отправляем результат
+                            await bot.send_photo(
+                                chat_id=user_id,
+                                photo=FSInputFile(result_file),
+                                caption="🎉 Ваша виртуальная примерка готова! 👚 Если хотите ещё примерить, напишите любое сообщение"
+                            )
+                            
+                            # Загружаем результат в Supabase
+                            await upload_to_supabase(result_file, user_id, "results")
+                            
+                            # Обновляем статус в Baserow
+                            await baserow.upsert_row(user_id, "", {
+                                "status": "Результат отправлен",
+                                "result_sent": True,
+                                "ready": True,
+                                "photo1_received": False,
+                                "photo2_received": False
+                            })
+                            
+                            # Удаляем директорию пользователя
+                            shutil.rmtree(user_dir)
+                            logger.info(f"Результат отправлен пользователю {user_id}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error sending result to {user_id_str}: {e}")
+                            # Если не удалось отправить, оставляем файлы для повторной попытки
+                            
+                except Exception as e:
+                    logger.error(f"Error processing user dir {user_id_str}: {e}")
+                    
         except Exception as e:
             logger.error(f"Error in results watcher: {e}")
         
