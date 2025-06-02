@@ -850,17 +850,17 @@ async def check_results():
                         user_id = int(user_id_str)
                         
                         # Отправка фото
-                        with open(result_file, 'rb') as photo_file:
-                            await bot.send_photo(
-                                chat_id=user_id,
-                                photo=photo_file,
-                                caption="🎉 Ваша виртуальная примерка готова!"
-                            )
+                        photo = FSInputFile(result_file)
+                        await bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption="🎉 Ваша виртуальная примерка готова!"
+                        )
                         
                         # Загрузка в Supabase
                         supabase_path = f"{user_id}/photos/result.jpg"
                         with open(result_file, 'rb') as f:
-                            supabase.storage.from_(UPLOADS_BUCKET).upload(
+                            await supabase.storage.from_(UPLOADS_BUCKET).upload(
                                 path=supabase_path,
                                 file=f,
                                 file_options={"content-type": "image/jpeg"}
@@ -884,13 +884,15 @@ async def check_results():
                                 user_id,
                                 "⚠️ Ошибка при отправке результата. Попробуйте ещё раз."
                             )
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.error(f"Failed to send error message: {e}")
+
+            # Увеличиваем интервал проверки, чтобы не нагружать сервер
+            await asyncio.sleep(30)  # Проверка каждые 30 секунд
 
         except Exception as e:
             logger.error(f"❌ Critical error in check_results(): {e}")
-
-        await asyncio.sleep(10)  # Проверка каждые 10 секунд
+            await asyncio.sleep(30)  # Ждем перед повторной попыткой
 
 async def handle(request):
     return web.Response(text="Bot is running")
