@@ -919,7 +919,7 @@ async def start_web_server():
     await site.start()
     logger.info("Web server started")
 	
-	async def on_shutdown():
+async def on_shutdown():
     logger.info("Shutting down...")
     await bot.delete_webhook()  # Удаляем вебхук при завершении
     logger.info("Webhook removed")
