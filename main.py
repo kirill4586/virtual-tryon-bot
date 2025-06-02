@@ -55,7 +55,6 @@ EXAMPLES_PER_PAGE = 3
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -863,7 +862,7 @@ async def check_results():
                         shutil.rmtree(user_dir)
                         logger.info(f"Результат отправлен пользователю {user_id}")
                         
-                    except Exception as e:
+                      except Exception as e:
                         logger.error(f"Error sending result to {user_id}: {e}")
                         
         except Exception as e:
