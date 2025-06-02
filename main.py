@@ -16,6 +16,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from io import BytesIO
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -140,14 +141,17 @@ class BaserowAPI:
 
 baserow = BaserowAPI()
 
-async def upload_to_supabase(user_id: int, file_name: str, file_data: bytes) -> str:
+async def upload_to_supabase(user_id: int, file_name: str, file_data: BytesIO) -> str:
     """Загружает файл в Supabase Storage и возвращает URL"""
     try:
         # Формируем путь в формате "uploads/user_id/filename"
         file_path = f"{user_id}/{file_name}"
         
+        # Получаем байты из BytesIO
+        file_bytes = file_data.getvalue()
+        
         # Загружаем файл
-        res = supabase.storage.from_(UPLOAD_DIR).upload(file_path, file_data)
+        res = supabase.storage.from_(UPLOAD_DIR).upload(file_path, file_bytes)
         
         # Получаем публичный URL
         url = supabase.storage.from_(UPLOAD_DIR).get_public_url(file_path)
@@ -347,7 +351,7 @@ async def process_photo(message: types.Message, user: types.User):
             file_name = f"photo_{photo_number}{file_ext}"
             
             # Скачиваем фото и загружаем в Supabase
-            file_data = await bot.download(photo)
+            file_data = BytesIO(await bot.download(photo))
             await upload_to_supabase(user.id, file_name, file_data)
             
             # Уменьшаем количество попыток
@@ -376,7 +380,7 @@ async def process_photo(message: types.Message, user: types.User):
             file_name = f"photo_{photo_number}{file_ext}"
             
             # Скачиваем фото и загружаем в Supabase
-            file_data = await bot.download(photo)
+            file_data = BytesIO(await bot.download(photo))
             await upload_to_supabase(user.id, file_name, file_data)
             
             await baserow.upsert_row(user.id, user.username, {
@@ -425,7 +429,7 @@ async def model_selected(callback_query: types.CallbackQuery):
                 model_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{model_path}")
                 
                 # Скачиваем модель и сохраняем в Supabase
-                model_data = supabase.storage.from_(MODELS_BUCKET).download(f"{model_path}")
+                model_data = BytesIO(supabase.storage.from_(MODELS_BUCKET).download(f"{model_path}"))
                 await upload_to_supabase(user_id, "selected_model.jpg", model_data)
                 
                 logger.info(f"Model {model_path} downloaded successfully")
@@ -514,7 +518,7 @@ async def check_results():
                 if result_file:
                     try:
                         # Скачиваем результат
-                        result_data = supabase.storage.from_(UPLOAD_DIR).download(f"{user_id}/{result_file['name']}")
+                        result_data = BytesIO(supabase.storage.from_(UPLOAD_DIR).download(f"{user_id}/{result_file['name']}"))
                         
                         # Отправляем пользователю
                         await bot.send_photo(
