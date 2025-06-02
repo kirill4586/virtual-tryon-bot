@@ -908,7 +908,11 @@ async def handle(request):
 
 def setup_web_server():
     app = web.Application()
-    app.router.add_get('/', handle)
+    app.router.add_get('/', handle)  # Для проверки работоспособности
+    
+    # Добавьте этот обработчик (важнейшая строка!)
+    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', dp.update)
+    
     return app
 
 async def start_web_server():
@@ -934,7 +938,7 @@ async def main():
         await runner.setup()
         
         # Получаем URL вебхука (на Render он будет вида https://your-service.onrender.com)
-        webhook_url = f"https://{os.getenv('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}"
+        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
         
         # Устанавливаем вебхук
         await bot.set_webhook(
