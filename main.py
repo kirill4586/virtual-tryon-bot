@@ -43,7 +43,7 @@ UPLOAD_DIR = "uploads"
 # Инициализация Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 buckets = supabase.storage.list_buckets()
-if UPLOAD_BUCKET not in [b.name for b in buckets]:
+if UPLOAD_BUCKET not in [b['name'] for b in buckets]:
     logger.warning(f"Bucket '{UPLOAD_BUCKET}' не найден. Создайте его вручную в Supabase.")
 
 # Инициализация бота
