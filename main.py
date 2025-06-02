@@ -17,6 +17,7 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from supabase import create_client, Client
 from dotenv import load_dotenv
+from aiohttp import web
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -826,32 +827,34 @@ async def check_payment(callback_query: types.CallbackQuery):
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
 
 async def check_results():
+    logger.info("Starting results watcher...")
     while True:
         try:
-            # Проверяем существование директории
             if not os.path.exists(UPLOAD_DIR):
+                logger.warning(f"Directory {UPLOAD_DIR} does not exist")
                 await asyncio.sleep(10)
                 continue
                 
+            logger.info(f"Checking directory {UPLOAD_DIR}")
             for user_id_str in os.listdir(UPLOAD_DIR):
-                try:
-                    user_dir = os.path.join(UPLOAD_DIR, user_id_str)
-                    if not os.path.isdir(user_dir):
-                        continue
-                    
-                    # Ищем файл результата
-                    result_file = None
-                    for ext in SUPPORTED_EXTENSIONS:
-                        test_path = os.path.join(user_dir, f"result{ext}")
-                        if os.path.exists(test_path):
-                            result_file = test_path
-                            break
-                    
-                    if result_file:
-                        try:
-                            # Преобразуем user_id в число
-                            user_id = int(user_id_str)
-                            
+                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+                if not os.path.isdir(user_dir):
+                    continue
+                
+                logger.info(f"Checking user dir: {user_dir}")
+                result_file = None
+                for ext in SUPPORTED_EXTENSIONS:
+                    test_path = os.path.join(user_dir, f"result{ext}")
+                    if os.path.exists(test_path):
+                        result_file = test_path
+                        logger.info(f"Found result file: {result_file}")
+                        break
+                
+                if result_file:
+                    try:
+                        user_id = int(user_id_str)
+                        logger.info(f"Sending result to user {user_id}")
+                        # ... остальной код отправки ...
                             # Отправляем результат
                             await bot.send_photo(
                                 chat_id=user_id,
@@ -886,9 +889,27 @@ async def check_results():
             logger.error(f"Error in results watcher: {e}")
         
         await asyncio.sleep(10)
+		async def handle(request):
+    return web.Response(text="Bot is running")
+
+def setup_web_server():
+    app = web.Application()
+    app.router.add_get('/', handle)
+    return app
+
+async def start_web_server():
+    app = setup_web_server()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
+    await site.start()
+    logger.info("Web server started")
 
 async def main():
     logger.info("Starting bot...")
+    
+    # Запуск веб-сервера для Render
+    asyncio.create_task(start_web_server())
     
     if supabase:
         try:
