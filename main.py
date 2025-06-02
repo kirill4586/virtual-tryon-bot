@@ -918,11 +918,11 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
     await site.start()
     logger.info("Web server started")
+	
 	async def on_shutdown():
     logger.info("Shutting down...")
     await bot.delete_webhook()  # Удаляем вебхук при завершении
     logger.info("Webhook removed")
-    # Дополнительные действия при завершении (если нужны)
 
 async def main():
     try:
