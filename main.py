@@ -956,8 +956,8 @@ async def check_results():
                         logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
                     
+                    # Удаляем файлы пользователя из Supabase по маске
                     try:
-                        # Явно удаляем все возможные пути, где могут лежать файлы пользователя
                         base = supabase.storage.from_(UPLOADS_BUCKET)
 
                         files_to_delete = [
@@ -971,7 +971,6 @@ async def check_results():
                             f"{user_id_str}/photos/photo_2.webp",
                         ]
 
-                        # Удалим все result_*.jpg в results/
                         try:
                             result_files = base.list(f"{user_id_str}/results")
                             for f in result_files:
@@ -984,7 +983,7 @@ async def check_results():
                         base.remove(files_to_delete)
                         logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(files_to_delete)} шт.")
                     except Exception as e:
-                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str}: {e}")
+                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
 logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
                     continue
 
