@@ -874,119 +874,133 @@ async def check_results():
 
                 logger.info(f"📁 Checking user dir: {user_dir}")
 
-                # 1. Ищем локально result-файлы
+                # 1. Ищем локально result-файлы с любым поддерживаемым расширением
                 result_files = [
                     f for f in os.listdir(user_dir)
-                    if f.startswith("result") and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
                 ]
 
-                # 2. Если не найдено — пробуем скачать из Supabase uploads/<user_id>/result.jpg
+                # 2. Если не найдено локально — пробуем скачать из Supabase
                 if not result_files:
-                    try:
-                        result_supabase_path = f"{user_id_str}/result.jpg"
-                        result_file_local = os.path.join(user_dir, "result.jpg")
-                        os.makedirs(user_dir, exist_ok=True)
-
-                        res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-                        with open(result_file_local, 'wb') as f:
-                            f.write(res)
-
-                        logger.info(f"✅ Скачан result.jpg из Supabase для пользователя {user_id_str}")
-                        result_files = ["result.jpg"]
-                    except Exception as e:
-                        logger.warning(f"❌ Не удалось скачать result.jpg из Supabase для {user_id_str}: {e}")
-                        continue
-
-                # 3. Отправляем файл
-                result_file = os.path.join(user_dir, result_files[0])
-
-                try:
-                    user_id = int(user_id_str)
-
-                    if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                        logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
-                        continue
-
-                    if os.path.getsize(result_file) == 0:
-                        logger.warning(f"🚫 Файл {result_file} пуст")
-                        continue
-
-                    logger.info(f"📤 Отправляем результат для {user_id}")
-
-                    photo = FSInputFile(result_file)
-                    await bot.send_photo(
-                        chat_id=user_id,
-                        photo=photo,
-                        caption="🎉 Ваша виртуальная примерка готова!"
-                    )
-
-                    # Загружаем результат в Supabase с новым уникальным именем
-                    try:
-                        file_ext = os.path.splitext(result_file)[1].lower()
-                        supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-
-                        with open(result_file, 'rb') as f:
-                            supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                path=supabase_path,
-                                file=f,
-                                file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                              "image/png" if file_ext == '.png' else
-                                              "image/webp"}
-                            )
-                        logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
-                    except Exception as upload_error:
-                        logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
-
-                    # Обновляем Baserow
-                    try:
-                        await baserow.upsert_row(user_id, "", {
-                            "status": "Результат отправлен",
-                            "result_sent": True,
-                            "ready": True,
-                            "result_url": supabase_path if 'supabase_path' in locals() else None
-                        })
-                    except Exception as db_error:
-                        logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
-
-                    # Удаляем локальную папку
-                    try:
-                        shutil.rmtree(user_dir)
-                        logger.info(f"🗑️ Папка {user_dir} удалена")
-                    except Exception as cleanup_error:
-                        logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
-
-                    # Удаляем файлы пользователя из Supabase по маске
-                    try:
-                        base = supabase.storage.from_(UPLOADS_BUCKET)
-
-                        files_to_delete = [
-                            f"{user_id_str}/photos/photo_1.jpg",
-                            f"{user_id_str}/photos/photo_1.jpeg",
-                            f"{user_id_str}/photos/photo_1.png",
-                            f"{user_id_str}/photos/photo_1.webp",
-                            f"{user_id_str}/photos/photo_2.jpg",
-                            f"{user_id_str}/photos/photo_2.jpeg",
-                            f"{user_id_str}/photos/photo_2.png",
-                            f"{user_id_str}/photos/photo_2.webp",
-                        ]
-
+                    for ext in SUPPORTED_EXTENSIONS:
                         try:
-                            result_files = base.list(f"{user_id_str}/results")
-                            for f in result_files:
-                                if f['name'].startswith("result_"):
-                                    files_to_delete.append(f"{user_id_str}/results/{f['name']}")
+                            result_supabase_path = f"{user_id_str}/result{ext}"
+                            result_file_local = os.path.join(user_dir, f"result{ext}")
+                            os.makedirs(user_dir, exist_ok=True)
+
+                            res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
+                            with open(result_file_local, 'wb') as f:
+                                f.write(res)
+
+                            logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
+                            result_files = [f"result{ext}"]
+                            break  # Прерываем цикл после успешной загрузки
                         except Exception as e:
-                            logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
+                            logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
+                            continue
 
-                        logger.info(f"➡️ Удаляем из Supabase: {files_to_delete}")
-                        base.remove(files_to_delete)
-                        logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(files_to_delete)} шт.")
+                # 3. Если файлы найдены, обрабатываем первый подходящий
+                if result_files:
+                    result_file = os.path.join(user_dir, result_files[0])
+
+                    try:
+                        user_id = int(user_id_str)
+
+                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
+                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
+                            continue
+
+                        if os.path.getsize(result_file) == 0:
+                            logger.warning(f"🚫 Файл {result_file} пуст")
+                            continue
+
+                        logger.info(f"📤 Отправляем результат для {user_id}")
+
+                        photo = FSInputFile(result_file)
+                        await bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption="🎉 Ваша виртуальная примерка готова!"
+                        )
+
+                        # Загружаем результат в Supabase с новым уникальным именем
+                        try:
+                            file_ext = os.path.splitext(result_file)[1].lower()
+                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
+
+                            with open(result_file, 'rb') as f:
+                                supabase.storage.from_(UPLOADS_BUCKET).upload(
+                                    path=supabase_path,
+                                    file=f,
+                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
+                                                "image/png" if file_ext == '.png' else
+                                                "image/webp"}
+                                )
+                            logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
+                        except Exception as upload_error:
+                            logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
+
+                        # Обновляем Baserow
+                        try:
+                            await baserow.upsert_row(user_id, "", {
+                                "status": "Результат отправлен",
+                                "result_sent": True,
+                                "ready": True,
+                                "result_url": supabase_path if 'supabase_path' in locals() else None
+                            })
+                        except Exception as db_error:
+                            logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
+
+                        # Удаляем локальную папку
+                        try:
+                            shutil.rmtree(user_dir)
+                            logger.info(f"🗑️ Папка {user_dir} удалена")
+                        except Exception as cleanup_error:
+                            logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
+
+                        # Удаляем файлы пользователя из Supabase
+                        try:
+                            base = supabase.storage.from_(UPLOADS_BUCKET)
+                            files_to_delete = []
+
+                            # Добавляем все возможные фото пользователя
+                            for ext in SUPPORTED_EXTENSIONS:
+                                files_to_delete.extend([
+                                    f"{user_id_str}/photos/photo_1{ext}",
+                                    f"{user_id_str}/photos/photo_2{ext}"
+                                ])
+
+                            # Добавляем все result-файлы
+                            try:
+                                result_files_in_supabase = base.list(f"{user_id_str}/results")
+                                for f in result_files_in_supabase:
+                                    if f['name'].startswith("result"):
+                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
+                            except Exception as e:
+                                logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
+
+                            # Удаляем только существующие файлы
+                            existing_files = []
+                            for file_path in files_to_delete:
+                                try:
+                                    base.download(file_path)  # Проверяем существование файла
+                                    existing_files.append(file_path)
+                                except Exception:
+                                    continue
+
+                            if existing_files:
+                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
+                                base.remove(existing_files)
+                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
+                            else:
+                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
+
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
+
                     except Exception as e:
-                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-
-                except Exception as e:
-                    logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                    continue
+                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+                        continue
 
             await asyncio.sleep(30)
 
