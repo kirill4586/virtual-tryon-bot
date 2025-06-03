@@ -1677,6 +1677,7 @@ async def check_results():
     while True:
         try:
             logger.info("🔍 Scanning for results...")
+			logger.info(f"Содержимое папки uploads/: {os.listdir(UPLOAD_DIR)}")
             if not os.path.exists(UPLOAD_DIR):
                 logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
                 await asyncio.sleep(10)
