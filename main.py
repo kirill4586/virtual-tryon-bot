@@ -1019,32 +1019,26 @@ async def check_results():
 async def handle(request):
     return web.Response(text="Bot is running")
 
-def setup_web_server():
-
-    async def health_check(request):
+async def health_check(request):
     return web.Response(text="OK", status=200)
 
-    def setup_web_server():
+def setup_web_server():
     app = web.Application()
     
     app.router.add_get('/', handle)
-    app.router.add_get('/health', health_check)  # ⚡ Добавьте эту строку
+    app.router.add_get('/health', health_check)
     app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
     return app
-    app = web.Application()
-    
-    async def handle(request):
-        return web.Response(text="Bot is running")
-    
-    async def webhook_handler(request):
-        try:
-            # Получаем обновление от Telegram
-            update = await request.json()
-            await dp.feed_webhook_update(bot, update)
-            return web.Response(text="OK")
-        except Exception as e:
-            logger.error(f"Webhook error: {e}")
-            return web.Response(status=500, text="Internal Server Error")
+
+async def webhook_handler(request):
+    try:
+        # Получаем обновление от Telegram
+        update = await request.json()
+        await dp.feed_webhook_update(bot, update)
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500, text="Internal Server Error")
     
     app.router.add_get('/', handle)
     app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
