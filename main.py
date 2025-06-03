@@ -199,7 +199,15 @@ class PaymentManager:
     @staticmethod
     async def create_payment_link(amount: float, label: str) -> str:
         """Создает ссылку для оплаты через ЮMoney"""
-        return f"https://yoomoney.ru/quickpay/confirm.xml?receiver={YMONEY_WALLET}&quickpay-form=small&targets={label}&paymentType=AC&sum={amount}&label={label}"
+        return (
+            f"https://yoomoney.ru/quickpay/confirm.xml?"
+            f"receiver={YMONEY_WALLET}&"
+            f"quickpay-form=small&"
+            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
+            f"paymentType=AC&"  # AC - банковская карта, PC - из кошелька ЮMoney
+            f"sum={amount}&"
+            f"label={label}"
+        )
 
     @staticmethod
     async def check_payment(label: str) -> bool:
@@ -221,6 +229,8 @@ class PaymentManager:
                     if resp.status == 200:
                         result = await resp.json()
                         return result.get("operations", []) != []
+                    else:
+                        logger.error(f"YooMoney API error: {resp.status} - {await resp.text()}")
         except Exception as e:
             logger.error(f"Error checking payment: {e}")
         return False
@@ -832,9 +842,8 @@ async def check_payment(callback_query: types.CallbackQuery):
         is_paid = await PaymentManager.check_payment(payment_label)
         
         if is_paid:
-            # Получаем сумму платежа (в реальной реализации нужно получать из API ЮMoney)
-            # Здесь для примера считаем, что оплачено 30 руб = 1 примерка
-            payment_amount = 30
+            # Получаем сумму платежа из API
+            payment_amount = 30  # Здесь должна быть логика получения реальной суммы из API
             additional_tries = payment_amount // PRICE_PER_TRY
             
             # Обновляем количество попыток
@@ -850,12 +859,20 @@ async def check_payment(callback_query: types.CallbackQuery):
             
             await notify_admin(f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) оплатил {payment_amount} руб.")
         else:
-            await callback_query.answer("❌ Оплата не найдена. Попробуйте позже или свяжитесь с поддержкой.", show_alert=True)
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Проверить ещё раз", 
+                    callback_data=f"check_payment_{payment_label}"
+                )]
+            ])
+            await callback_query.message.answer(
+                "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
+                reply_markup=keyboard
+            )
             
     except Exception as e:
         logger.error(f"Error checking payment: {e}")
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
-
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
     while True:
