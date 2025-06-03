@@ -1677,7 +1677,7 @@ async def check_results():
     while True:
         try:
             logger.info("🔍 Scanning for results...")
-            logger.info(f"Содержимое папки uploads/: {os.listdir(UPLOAD_DIR)}")
+
             if not os.path.exists(UPLOAD_DIR):
                 logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
                 await asyncio.sleep(10)
@@ -1688,125 +1688,97 @@ async def check_results():
                 if not os.path.isdir(user_dir):
                     continue
 
-                logger.info(f"Checking user dir: {user_dir}")
-                
-                # Проверяем все возможные форматы результата
+                logger.info(f"📁 Checking user dir: {user_dir}")
+
+                # 1. Ищем локально result-файлы
                 result_files = [
-    f for f in os.listdir(user_dir) 
-    if f.startswith("result") and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-]
+                    f for f in os.listdir(user_dir)
+                    if f.startswith("result") and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+                ]
 
-# Если локально не найдено — пробуем скачать из Supabase
+                # 2. Если не найдено — пробуем скачать из Supabase
                 if not result_files:
-                try:
-        # Пробуем скачать result.jpg из Supabase
-        result_supabase_path = f"{user_id_str}/results/result.jpg"
-        result_file_local = os.path.join(user_dir, "result.jpg")
-        os.makedirs(user_dir, exist_ok=True)
+                    try:
+                        result_supabase_path = f"{user_id_str}/results/result.jpg"
+                        result_file_local = os.path.join(user_dir, "result.jpg")
+                        os.makedirs(user_dir, exist_ok=True)
 
-        res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-        with open(result_file_local, 'wb') as f:
-            f.write(res)
+                        res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
+                        with open(result_file_local, 'wb') as f:
+                            f.write(res)
 
-        logger.info(f"✅ Файл result.jpg скачан из Supabase для пользователя {user_id_str}")
-        result_files = ["result.jpg"]
-    except Exception as e:
-        logger.warning(f"❌ Не удалось скачать результат из Supabase для {user_id_str}: {e}")
-        continue
+                        logger.info(f"✅ Скачан result.jpg из Supabase для пользователя {user_id_str}")
+                        result_files = ["result.jpg"]
+                    except Exception as e:
+                        logger.warning(f"❌ Не удалось скачать результат из Supabase для {user_id_str}: {e}")
+                        continue
 
-                
-                if not result_files:
-                    continue
-                    
+                # 3. Отправляем файл
                 result_file = os.path.join(user_dir, result_files[0])
-                
+
                 try:
                     user_id = int(user_id_str)
-                    
-                    # Проверяем, что файл существует и доступен для чтения
-                    if not os.path.isfile(result_file):
-                        logger.warning(f"Result file {result_file} is not a file")
+
+                    if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
+                        logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
                         continue
-                        
-                    if not os.access(result_file, os.R_OK):
-                        logger.warning(f"Result file {result_file} is not readable")
+
+                    if os.path.getsize(result_file) == 0:
+                        logger.warning(f"🚫 Файл {result_file} пуст")
                         continue
-                        
-                    # Проверяем размер файла
-                    file_size = os.path.getsize(result_file)
-                    if file_size == 0:
-                        logger.warning(f"Result file {result_file} is empty")
-                        continue
-                        
-                    logger.info(f"✅ Found result for user {user_id_str} ({file_size} bytes)")
-                    
-                    # Отправка фото
+
+                    logger.info(f"📤 Отправляем результат для {user_id}")
+
+                    photo = FSInputFile(result_file)
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo,
+                        caption="🎉 Ваша виртуальная примерка готова!"
+                    )
+
+                    # Загружаем результат в Supabase (ещё раз, но с уникальным именем)
                     try:
-                        photo = FSInputFile(result_file)
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!"
-                        )
-                        logger.info(f"Photo sent to user {user_id}")
-                        
-                        # Загрузка в Supabase
-                        try:
-                            file_ext = os.path.splitext(result_file)[1].lower()
-                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-                            
-                            with open(result_file, 'rb') as f:
-                                res = supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                    path=supabase_path,
-                                    file=f,
-                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else 
-                                                  "image/png" if file_ext == '.png' else
-                                                  "image/webp"}
-                                )
-                            logger.info(f"Result uploaded to Supabase: {supabase_path}")
-                        except Exception as upload_error:
-                            logger.error(f"Error uploading result to Supabase: {upload_error}")
-                        
-                        # Обновление статуса
-                        try:
-                            await baserow.upsert_row(user_id, "", {
-                                "status": "Результат отправлен",
-                                "result_sent": True,
-                                "ready": True,
-                                "result_url": supabase_path if 'supabase_path' in locals() else None
-                            })
-                        except Exception as db_error:
-                            logger.error(f"Error updating database: {db_error}")
-                        
-                        # Очистка папки
-                        try:
-                            shutil.rmtree(user_dir)
-                            logger.info(f"User directory {user_dir} removed")
-                        except Exception as cleanup_error:
-                            logger.error(f"Error cleaning up directory: {cleanup_error}")
-                            
-                    except Exception as send_error:
-                        logger.error(f"Error sending photo to user {user_id}: {send_error}")
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                "⚠️ Произошла ошибка при отправке результата. Пожалуйста, попробуйте снова."
+                        file_ext = os.path.splitext(result_file)[1].lower()
+                        supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
+
+                        with open(result_file, 'rb') as f:
+                            supabase.storage.from_(UPLOADS_BUCKET).upload(
+                                path=supabase_path,
+                                file=f,
+                                file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
+                                              "image/png" if file_ext == '.png' else
+                                              "image/webp"}
                             )
-                        except Exception as fallback_error:
-                            logger.error(f"Failed to send error message: {fallback_error}")
+                        logger.info(f"☁️ Result uploaded to Supabase: {supabase_path}")
+                    except Exception as upload_error:
+                        logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
 
-                except ValueError:
-                    logger.warning(f"Invalid user ID format: {user_id_str}")
-                    continue
+                    # Обновляем Baserow
+                    try:
+                        await baserow.upsert_row(user_id, "", {
+                            "status": "Результат отправлен",
+                            "result_sent": True,
+                            "ready": True,
+                            "result_url": supabase_path if 'supabase_path' in locals() else None
+                        })
+                    except Exception as db_error:
+                        logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
+
+                    # Удаляем папку
+                    try:
+                        shutil.rmtree(user_dir)
+                        logger.info(f"🗑️ Папка {user_dir} удалена")
+                    except Exception as cleanup_error:
+                        logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
+
                 except Exception as e:
-                    logger.error(f"Error processing result for {user_id_str}: {e}")
+                    logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
                     continue
 
-            # Увеличиваем интервал проверки
             await asyncio.sleep(30)
 
         except Exception as e:
-            logger.error(f"❌ Critical error in check_results(): {e}")
+            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
 async def handle(request):
