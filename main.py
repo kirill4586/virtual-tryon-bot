@@ -201,12 +201,13 @@ class PaymentManager:
         """Создает ссылку для оплаты через ЮMoney"""
         return (
             f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver={YMONEY_WALLET}&"
+            f"receiver=4100118715530282&"
             f"quickpay-form=small&"
-            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
-            f"paymentType=AC&"  # AC - банковская карта, PC - из кошелька ЮMoney
+            f"paymentType=AC,PC&"  # AC — карта, PC — ЮMoney (оба варианта)
             f"sum={amount}&"
-            f"label={label}"
+            f"label={label}&"
+            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
+            f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
         )
 
     @staticmethod
