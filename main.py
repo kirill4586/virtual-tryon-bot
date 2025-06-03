@@ -263,6 +263,23 @@ async def update_user_tries(user_id: int, tries: int):
                         await session.patch(update_url, headers=headers, json={"tries_left": tries})
     except Exception as e:
         logger.error(f"Error updating user tries: {e}")
+		def list_all_files(bucket, prefix):
+    """Рекурсивно обходит все файлы в Supabase Storage начиная с указанного префикса"""
+    files = []
+    try:
+        items = bucket.list(prefix)
+        for item in items:
+            name = item.get('name')
+            if name:
+                if not name.endswith('/'):  # файл
+                    files.append(f"{prefix}/{name}".strip("/"))
+                else:  # папка
+                    sub_prefix = f"{prefix}/{name}".strip("/")
+                    files += list_all_files(bucket, sub_prefix)
+    except Exception as e:
+        logger.error(f"❌ Ошибка обхода Supabase Storage в {prefix}: {e}")
+    return files
+
 
 def list_all_files(bucket, prefix):
     """Рекурсивно обходит все файлы в Supabase Storage начиная с указанного префикса"""
@@ -957,15 +974,16 @@ async def check_results():
 
                     # Удаляем ВСЕ файлы пользователя из Supabase (включая photos/, result.jpg и results/)
                     try:
-                        all_files = supabase.storage.from_(UPLOADS_BUCKET).list(user_id_str, {"recursive": True})
-                        file_paths = [f"{user_id_str}/{file['name']}" for file in all_files]
-
+					    try:
+                        file_paths = list_all_files(supabase.storage.from_(UPLOADS_BUCKET), user_id_str)
+                        logger.info(f"➡️ Удаляем из Supabase: {file_paths}")
+    
                         if file_paths:
-                            supabase.storage.from_(UPLOADS_BUCKET).remove(file_paths)
-                            logger.info(f"🗑️ Все файлы пользователя {user_id_str} удалены из Supabase: {len(file_paths)} шт.")
+                        supabase.storage.from_(UPLOADS_BUCKET).remove(file_paths)
+                        logger.info(f"🗑️ Все файлы пользователя {user_id_str} удалены из Supabase: {len(file_paths)} шт.")
                         else:
-                            logger.info(f"ℹ️ В Supabase не найдено файлов для удаления у пользователя {user_id_str}")
-                    except Exception as e:
+                        logger.info(f"ℹ️ В Supabase не найдено файлов для удаления у пользователя {user_id_str}")
+                        except Exception as e:
                         logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
 
                 except Exception as e:
