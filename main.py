@@ -263,7 +263,8 @@ async def update_user_tries(user_id: int, tries: int):
                         await session.patch(update_url, headers=headers, json={"tries_left": tries})
     except Exception as e:
         logger.error(f"Error updating user tries: {e}")
-     def list_all_files(bucket, prefix):
+		
+def list_all_files(bucket, prefix):
     """Рекурсивно обходит все файлы в Supabase Storage начиная с указанного префикса"""
     files = []
     try:
@@ -279,6 +280,7 @@ async def update_user_tries(user_id: int, tries: int):
     except Exception as e:
         logger.error(f"❌ Ошибка обхода Supabase Storage в {prefix}: {e}")
     return files
+
 
 
 def list_all_files(bucket, prefix):
