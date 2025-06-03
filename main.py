@@ -1692,9 +1692,28 @@ async def check_results():
                 
                 # Проверяем все возможные форматы результата
                 result_files = [
-                    f for f in os.listdir(user_dir) 
-                    if f.startswith("result") and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
-                ]
+    f for f in os.listdir(user_dir) 
+    if f.startswith("result") and f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
+]
+
+# Если локально не найдено — пробуем скачать из Supabase
+                if not result_files:
+                try:
+        # Пробуем скачать result.jpg из Supabase
+        result_supabase_path = f"{user_id_str}/results/result.jpg"
+        result_file_local = os.path.join(user_dir, "result.jpg")
+        os.makedirs(user_dir, exist_ok=True)
+
+        res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
+        with open(result_file_local, 'wb') as f:
+            f.write(res)
+
+        logger.info(f"✅ Файл result.jpg скачан из Supabase для пользователя {user_id_str}")
+        result_files = ["result.jpg"]
+    except Exception as e:
+        logger.warning(f"❌ Не удалось скачать результат из Supabase для {user_id_str}: {e}")
+        continue
+
                 
                 if not result_files:
                     continue
