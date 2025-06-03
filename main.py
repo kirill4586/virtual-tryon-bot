@@ -960,43 +960,55 @@ async def check_results():
 
                         # Удаляем файлы пользователя из Supabase
                         try:
-                            base = supabase.storage.from_(UPLOADS_BUCKET)
-                            files_to_delete = []
+                            # Удаляем файлы пользователя из Supabase
+try:
+    base = supabase.storage.from_(UPLOADS_BUCKET)
+    files_to_delete = []
 
-                            # Добавляем все возможные фото пользователя
-                            for ext in SUPPORTED_EXTENSIONS:
-                                files_to_delete.extend([
-                                    f"{user_id_str}/photos/photo_1{ext}",
-                                    f"{user_id_str}/photos/photo_2{ext}"
-                                ])
+    # Добавляем все возможные фото пользователя
+    for ext in SUPPORTED_EXTENSIONS:
+        files_to_delete.extend([
+            f"{user_id_str}/photos/photo_1{ext}",
+            f"{user_id_str}/photos/photo_2{ext}"
+        ])
 
-                            # Добавляем все result-файлы
-                            try:
-                                result_files_in_supabase = base.list(f"{user_id_str}/results")
-                                for f in result_files_in_supabase:
-                                    if f['name'].startswith("result"):
-                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
+    # Добавляем result-файлы из папки results
+    try:
+        result_files_in_supabase = base.list(f"{user_id_str}/results")
+        for f in result_files_in_supabase:
+            if f['name'].startswith("result"):
+                files_to_delete.append(f"{user_id_str}/results/{f['name']}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось получить список result-файлов из results/: {e}")
 
-                            # Удаляем только существующие файлы
-                            existing_files = []
-                            for file_path in files_to_delete:
-                                try:
-                                    base.download(file_path)  # Проверяем существование файла
-                                    existing_files.append(file_path)
-                                except Exception:
-                                    continue
+    # Добавляем result-файлы из корня uploads/{user_id}/
+    try:
+        root_files = base.list(user_id_str)
+        for f in root_files:
+            if f['name'].startswith("result") and any(f['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS):
+                files_to_delete.append(f"{user_id_str}/{f['name']}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось получить список result-файлов из корня: {e}")
 
-                            if existing_files:
-                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
-                                base.remove(existing_files)
-                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
-                            else:
-                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
+    # Удаляем только существующие
+    existing_files = []
+    for file_path in files_to_delete:
+        try:
+            base.download(file_path)  # Проверяем, существует ли файл
+            existing_files.append(file_path)
+        except Exception:
+            continue
 
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
+    if existing_files:
+        logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
+        base.remove(existing_files)
+        logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
+    else:
+        logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
+
+except Exception as e:
+    logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
+
 
                     except Exception as e:
                         logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
