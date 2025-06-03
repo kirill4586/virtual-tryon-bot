@@ -934,14 +934,18 @@ async def check_results():
                     except Exception as cleanup_error:
                         logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
-                    # Удаляем папку пользователя из Supabase
+                    # Удаляем ВСЕ файлы пользователя из Supabase (включая photos/, result.jpg и results/)
                     try:
-                        files = supabase.storage.from_(UPLOADS_BUCKET).list(user_id_str)
-                        for file in files:
-                            supabase.storage.from_(UPLOADS_BUCKET).remove(f"{user_id_str}/{file['name']}")
-                        logger.info(f"🗑️ Папка {user_id_str} удалена из Supabase")
+                        all_files = supabase.storage.from_(UPLOADS_BUCKET).list(user_id_str, {"recursive": True})
+                        file_paths = [f"{user_id_str}/{file['name']}" for file in all_files]
+
+                        if file_paths:
+                            supabase.storage.from_(UPLOADS_BUCKET).remove(file_paths)
+                            logger.info(f"🗑️ Все файлы пользователя {user_id_str} удалены из Supabase: {len(file_paths)} шт.")
+                        else:
+                            logger.info(f"ℹ️ В Supabase не найдено файлов для удаления у пользователя {user_id_str}")
                     except Exception as e:
-                        logger.error(f"❌ Ошибка удаления папки {user_id_str} из Supabase: {e}")
+                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
 
                 except Exception as e:
                     logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
@@ -952,8 +956,6 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
-
-
 async def handle(request):
     return web.Response(text="Bot is running")
 
