@@ -955,7 +955,6 @@ async def check_results():
                     except Exception as cleanup_error:
                         logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
-                    
                     # Удаляем файлы пользователя из Supabase по маске
                     try:
                         base = supabase.storage.from_(UPLOADS_BUCKET)
@@ -984,9 +983,10 @@ async def check_results():
                         logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(files_to_delete)} шт.")
                     except Exception as e:
                         logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-        except Exception as e:
-            logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-            continue
+
+                except Exception as e:
+                    logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+                    continue
 
             await asyncio.sleep(30)
 
