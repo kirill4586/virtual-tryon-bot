@@ -933,8 +933,8 @@ async def check_results():
                                     path=supabase_path,
                                     file=f,
                                     file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                                "image/png" if file_ext == '.png' else
-                                                "image/webp"}
+                                              "image/png" if file_ext == '.png' else
+                                              "image/webp"}
                                 )
                             logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
                         except Exception as upload_error:
@@ -1006,6 +1006,8 @@ async def check_results():
 
                         except Exception as e:
                             logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
+
+                    except Exception as e:
                         logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
                         continue
 
