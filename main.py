@@ -264,8 +264,6 @@ async def update_user_tries(user_id: int, tries: int):
     except Exception as e:
         logger.error(f"Error updating user tries: {e}")
 
-
-
 def list_all_files(bucket, prefix):
     """Рекурсивно обходит все файлы в Supabase Storage начиная с указанного префикса"""
     files = []
@@ -274,14 +272,16 @@ def list_all_files(bucket, prefix):
         for item in items:
             name = item.get('name')
             if name:
-                if not name.endswith('/'):  # файл
-                    files.append(f"{prefix}/{name}".strip("/"))
-                else:  # папка
-                    sub_prefix = f"{prefix}/{name}".strip("/")
-                    files += list_all_files(bucket, sub_prefix)
+                full_path = f"{prefix}/{name}".strip("/")
+                if name.endswith('/'):
+                    # Папка — идем глубже
+                    files += list_all_files(bucket, full_path)
+                else:
+                    files.append(full_path)
     except Exception as e:
         logger.error(f"❌ Ошибка обхода Supabase Storage в {prefix}: {e}")
     return files
+
 
 async def is_processing(user_id: int) -> bool:
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
@@ -955,21 +955,37 @@ async def check_results():
                     except Exception as cleanup_error:
                         logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
-                    # Удаляем ВСЕ файлы пользователя из Supabase (включая photos/, result.jpg и results/)
+                    
                     try:
-                        all_files = supabase.storage.from_(UPLOADS_BUCKET).list(user_id_str, {"recursive": True})
-                        file_paths = [f"{user_id_str}/{file['name']}" for file in all_files]
+                        # Явно удаляем все возможные пути, где могут лежать файлы пользователя
+                        base = supabase.storage.from_(UPLOADS_BUCKET)
 
-                        if file_paths:
-                            supabase.storage.from_(UPLOADS_BUCKET).remove(file_paths)
-                            logger.info(f"🗑️ Все файлы пользователя {user_id_str} удалены из Supabase: {len(file_paths)} шт.")
-                        else:
-                            logger.info(f"ℹ️ В Supabase не найдено файлов для удаления у пользователя {user_id_str}")
+                        files_to_delete = [
+                            f"{user_id_str}/photos/photo_1.jpg",
+                            f"{user_id_str}/photos/photo_1.jpeg",
+                            f"{user_id_str}/photos/photo_1.png",
+                            f"{user_id_str}/photos/photo_1.webp",
+                            f"{user_id_str}/photos/photo_2.jpg",
+                            f"{user_id_str}/photos/photo_2.jpeg",
+                            f"{user_id_str}/photos/photo_2.png",
+                            f"{user_id_str}/photos/photo_2.webp",
+                        ]
+
+                        # Удалим все result_*.jpg в results/
+                        try:
+                            result_files = base.list(f"{user_id_str}/results")
+                            for f in result_files:
+                                if f['name'].startswith("result_"):
+                                    files_to_delete.append(f"{user_id_str}/results/{f['name']}")
+                        except Exception as e:
+                            logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
+
+                        logger.info(f"➡️ Удаляем из Supabase: {files_to_delete}")
+                        base.remove(files_to_delete)
+                        logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(files_to_delete)} шт.")
                     except Exception as e:
-                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-
-                except Exception as e:
-                    logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+                        logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str}: {e}")
+logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
                     continue
 
             await asyncio.sleep(30)
