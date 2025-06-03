@@ -927,12 +927,21 @@ async def check_results():
                     except Exception as db_error:
                         logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
 
-                    # Удаляем папку
+                    # Удаляем локальную папку
                     try:
                         shutil.rmtree(user_dir)
                         logger.info(f"🗑️ Папка {user_dir} удалена")
                     except Exception as cleanup_error:
                         logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
+
+                    # Удаляем папку пользователя из Supabase
+                    try:
+                        files = supabase.storage.from_(UPLOADS_BUCKET).list(user_id_str)
+                        for file in files:
+                            supabase.storage.from_(UPLOADS_BUCKET).remove(f"{user_id_str}/{file['name']}")
+                        logger.info(f"🗑️ Папка {user_id_str} удалена из Supabase")
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка удаления папки {user_id_str} из Supabase: {e}")
 
                 except Exception as e:
                     logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
@@ -943,6 +952,7 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 
 async def handle(request):
     return web.Response(text="Bot is running")
