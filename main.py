@@ -45,6 +45,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
+CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
+MIN_PAYMENT_AMOUNT = 30  # Минимальная сумма оплаты
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
 TABLE_ID = int(os.getenv("TABLE_ID"))
@@ -67,7 +69,6 @@ EXAMPLES_PER_PAGE = 3
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -246,7 +247,7 @@ async def get_user_tries(user_id: int) -> int:
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=self.headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -265,7 +266,7 @@ async def update_user_tries(user_id: int, tries: int):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=self.headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -866,9 +867,18 @@ async def check_payment(callback_query: types.CallbackQuery):
                     callback_data=f"check_payment_{payment_label}"
                 )]
             ])
-            await callback_query.message.answer(
+		            await callback_query.message.answer(
                 "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
-                reply_markup=keyboard
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🔄 Проверить ещё раз", 
+                                callback_data=f"check_payment_{payment_label}"
+                            )
+                        ]
+                    ]
+                )
             )
             
     except Exception as e:
@@ -879,8 +889,8 @@ async def check_payment(callback_query: types.CallbackQuery):
 async def handle_pay_command(message: types.Message):
     try:
         amount = int(message.text.split()[1])
-        if amount < 30:
-            await message.answer("❌ Минимальная сумма — 30 руб.")
+        if amount < PRICE_PER_TRY:
+            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
             return
 
         label = f"tryon_{message.from_user.id}"
@@ -932,12 +942,22 @@ async def pay_help(message: types.Message):
         "2. Перейдите по ссылке и оплатите\n"
         "3. Нажмите «Я оплатил»\n\n"
         "🎁 Примеры:\n"
-        "• 30 руб = 1 примерка\n"
-        "• 90 руб = 3 примерки\n"
-        "• 150 руб = 5 примерок\n"
-        "• 300 руб = 10 примерок"
+        f"• {PRICE_PER_TRY} руб = 1 примерка\n"
+        f"• {PRICE_PER_TRY*3} руб = 3 примерки\n"
+        f"• {PRICE_PER_TRY*5} руб = 5 примерок\n"
+        f"• {PRICE_PER_TRY*10} руб = 10 примерок"
     )
 
+@dp.message(Command("balance"))
+async def handle_balance(message: types.Message):
+    tries_left = await get_user_tries(message.from_user.id)
+    await message.answer(
+        f"🔄 У вас осталось {tries_left} примерок\n\n"
+        "Чтобы пополнить баланс, нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=CUSTOM_PAYMENT_BTN_TEXT, callback_data="custom_payment")]
+        ])
+    )
 
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
@@ -1099,6 +1119,7 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 async def handle(request):
     return web.Response(text="Bot is running")
 
@@ -1123,10 +1144,6 @@ async def webhook_handler(request):
         logger.error(f"Webhook error: {e}")
         return web.Response(status=500, text="Internal Server Error")
     
-    app.router.add_get('/', handle)
-    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
-    return app
-
 async def start_web_server():
     app = setup_web_server()
     runner = web.AppRunner(app)
@@ -1134,7 +1151,7 @@ async def start_web_server():
     site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
     await site.start()
     logger.info("Web server started")
-	
+    
 async def on_shutdown():
     logger.info("Shutting down...")
     await bot.delete_webhook()  # Удаляем вебхук при завершении
@@ -1193,4 +1210,4 @@ if __name__ == "__main__":
         # Всегда вызываем on_shutdown() перед выходом
         loop.run_until_complete(on_shutdown())
         loop.close()
-        logger.info("Bot successfully shut down")
+        logger.info("Bot successfully shut down")	
