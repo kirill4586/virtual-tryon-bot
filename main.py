@@ -886,16 +886,14 @@ async def handle_pay_command(message: types.Message):
         label = f"tryon_{message.from_user.id}"
         payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
 
+        text = (
+            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>\n\n"
+            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:"
+        )
+
         await message.answer(
-            (
-                f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>"
-
-"
-                f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>"
-
-"
-                "После оплаты нажмите кнопку ниже:"
-            ),
+            text,
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
             ])
@@ -918,10 +916,8 @@ async def check_payment_custom(callback: types.CallbackQuery):
         await update_user_tries(user_id, new_total)
 
         await callback.message.edit_text(
-            f"✅ Оплата {amount} руб. подтверждена!
-"
-            f"🎁 Зачислено: <b>{tries} примерок</b>
-"
+            f"✅ Оплата {amount} руб. подтверждена!\n"
+            f"🎁 Зачислено: <b>{tries} примерок</b>\n"
             f"Всего доступно: <b>{new_total}</b>"
         )
         await notify_admin(f"💰 @{callback.from_user.username} ({user_id}) оплатил {amount} руб.")
@@ -931,25 +927,17 @@ async def check_payment_custom(callback: types.CallbackQuery):
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
     await message.answer(
-        "💡 Как оплатить:
-"
-        "1. Введите <code>/pay 150</code> (число — сумма в рублях)
-"
-        "2. Перейдите по ссылке и оплатите
-"
-        "3. Нажмите «Я оплатил»
-
-"
-        "🎁 Примеры:
-"
-        "• 30 руб = 1 примерка
-"
-        "• 90 руб = 3 примерки
-"
-        "• 150 руб = 5 примерок
-"
+        "💡 Как оплатить:\n"
+        "1. Введите <code>/pay 150</code> (число — сумма в рублях)\n"
+        "2. Перейдите по ссылке и оплатите\n"
+        "3. Нажмите «Я оплатил»\n\n"
+        "🎁 Примеры:\n"
+        "• 30 руб = 1 примерка\n"
+        "• 90 руб = 3 примерки\n"
+        "• 150 руб = 5 примерок\n"
         "• 300 руб = 10 примерок"
     )
+
 
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
