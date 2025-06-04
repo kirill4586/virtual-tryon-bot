@@ -945,7 +945,7 @@ async def pay_help(message: types.Message):
 async def handle_balance(message: types.Message):
     tries_left = await get_user_tries(message.from_user.id)
     await message.answer(
-        f"🔄 У вас осталось {tries_left} примерок
+        f"🔄 У вас осталось {tries_left} примерок"
 
 "
         "Чтобы пополнить баланс, нажмите кнопку ниже:",
