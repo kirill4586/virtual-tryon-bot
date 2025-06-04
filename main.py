@@ -730,14 +730,6 @@ async def handle_photo(message: types.Message):
         
         # Если попыток нет, предлагаем оплатить
         if tries_left <= 0:
-            payment_label = f"tryon_{user_id}"
-            payment_link = await PaymentManager.create_payment_link(PRICE_PER_TRY, payment_label)
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="💳 Оплатить 30 руб", url=payment_link)],
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{payment_label}")]
-            ])
-            
             await message.answer(
                 "🚫 У вас закончились бесплатные примерки.\n\n"
                 "💵 Стоимость одной примерки: 30 руб.\n"
@@ -746,7 +738,10 @@ async def handle_photo(message: types.Message):
                 "30 руб = 1 примерка\n"
                 "60 руб = 2 примерки\n"
                 "90 руб = 3 примерки и т.д.",
-                reply_markup=keyboard
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
+                    [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
+                )
             )
             return
             
