@@ -862,13 +862,7 @@ async def check_payment(callback_query: types.CallbackQuery):
             
             await notify_admin(f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) оплатил {payment_amount} руб.")
         else:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="🔄 Проверить ещё раз", 
-                    callback_data=f"check_payment_{payment_label}"
-                )]
-            ])
-		            await callback_query.message.answer(
+            await callback_query.message.answer(
                 "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
                 reply_markup=InlineKeyboardMarkup(
                     inline_keyboard=[
