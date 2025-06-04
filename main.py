@@ -946,8 +946,6 @@ async def handle_balance(message: types.Message):
     tries_left = await get_user_tries(message.from_user.id)
     await message.answer(
         f"🔄 У вас осталось {tries_left} примерок"
-
-"
         "Чтобы пополнить баланс, нажмите кнопку ниже:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=CUSTOM_PAYMENT_BTN_TEXT, callback_data="custom_payment")]
