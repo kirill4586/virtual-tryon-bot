@@ -888,10 +888,10 @@ async def handle_pay_command(message: types.Message):
 
         await message.answer(
             (
-                f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>
+                f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>"
 
 "
-                f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>
+                f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>"
 
 "
                 "После оплаты нажмите кнопку ниже:"
