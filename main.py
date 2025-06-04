@@ -738,9 +738,11 @@ async def handle_photo(message: types.Message):
                 "30 руб = 1 примерка\n"
                 "60 руб = 2 примерки\n"
                 "90 руб = 3 примерки и т.д.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
-                    [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
+                        [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
+                    ]
                 )
             )
             return
