@@ -960,6 +960,7 @@ async def show_payment_options(callback_query: types.CallbackQuery):
             [InlineKeyboardButton(text="💳 30 руб (1 примерка)", callback_data="standard_payment")],
             [InlineKeyboardButton(text="💳 90 руб (3 примерки)", callback_data="payment_90")],
             [InlineKeyboardButton(text="💳 300 руб (10 примерок)", callback_data="payment_300")],
+            [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_balance")]
         ])
     )
@@ -1028,7 +1029,7 @@ async def handle_balance(message: types.Message):
         "Выберите сумму для оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
-            [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
+            # Убрали отдельную кнопку "Оплатить произвольную сумму"
         ])
     )
 
