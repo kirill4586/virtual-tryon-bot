@@ -978,7 +978,22 @@ async def handle_payment_90(callback_query: types.CallbackQuery):
         "После оплаты нажмите кнопку ниже:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_90_{callback_query.from_user.id}")]
-        )
+        ])
+    )
+    await callback_query.answer()
+
+@dp.callback_query(F.data == "payment_300")
+async def handle_payment_300(callback_query: types.CallbackQuery):
+    label = f"tryon_{callback_query.from_user.id}"
+    payment_link = await PaymentManager.create_payment_link(amount=300, label=label)
+    
+    await callback_query.message.edit_text(
+        "💳 Оплатите <b>300 руб.</b> и получите <b>10 примерок</b>\n\n"
+        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+        "После оплаты нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_300_{callback_query.from_user.id}")]
+        ])
     )
     await callback_query.answer()
 
