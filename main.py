@@ -887,13 +887,15 @@ async def handle_pay_command(message: types.Message):
         payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
 
         await message.answer(
-            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>
+            (
+                f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>
 
 "
-            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>
+                f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>
 
 "
-            f"После оплаты нажмите кнопку ниже:",
+                "После оплаты нажмите кнопку ниже:"
+            ),
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
             ])
