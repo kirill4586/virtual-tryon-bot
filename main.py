@@ -46,6 +46,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
+MIN_PAYMENT_AMOUNT = 30  # Минимальная сумма оплаты
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
 TABLE_ID = int(os.getenv("TABLE_ID"))
@@ -68,7 +69,6 @@ EXAMPLES_PER_PAGE = 3
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -247,7 +247,7 @@ async def get_user_tries(user_id: int) -> int:
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=self.headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -266,7 +266,7 @@ async def update_user_tries(user_id: int, tries: int):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
+            async with session.get(url, headers=self.headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -861,7 +861,7 @@ async def check_payment(callback_query: types.CallbackQuery):
             
             await notify_admin(f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) оплатил {payment_amount} руб.")
         else:
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            keyboard = InlineKeyboardMarkup(inline_keyboardkeyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(
                     text="🔄 Проверить ещё раз", 
                     callback_data=f"check_payment_{payment_label}"
