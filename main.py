@@ -874,6 +874,81 @@ async def check_payment(callback_query: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error checking payment: {e}")
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
+
+@dp.message(Command("pay"))
+async def handle_pay_command(message: types.Message):
+    try:
+        amount = int(message.text.split()[1])
+        if amount < 30:
+            await message.answer("❌ Минимальная сумма — 30 руб.")
+            return
+
+        label = f"tryon_{message.from_user.id}"
+        payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
+
+        await message.answer(
+            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>
+
+"
+            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>
+
+"
+            f"После оплаты нажмите кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
+            ])
+        )
+    except (IndexError, ValueError):
+        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
+
+@dp.callback_query(F.data.startswith("check_"))
+async def check_payment_custom(callback: types.CallbackQuery):
+    _, amount_str, user_id_str = callback.data.split("_")
+    amount = int(amount_str)
+    user_id = int(user_id_str)
+
+    is_paid = await PaymentManager.check_payment(f"tryon_{user_id}")
+
+    if is_paid:
+        tries = amount // PRICE_PER_TRY
+        current_tries = await get_user_tries(user_id)
+        new_total = current_tries + tries
+        await update_user_tries(user_id, new_total)
+
+        await callback.message.edit_text(
+            f"✅ Оплата {amount} руб. подтверждена!
+"
+            f"🎁 Зачислено: <b>{tries} примерок</b>
+"
+            f"Всего доступно: <b>{new_total}</b>"
+        )
+        await notify_admin(f"💰 @{callback.from_user.username} ({user_id}) оплатил {amount} руб.")
+    else:
+        await callback.answer("❌ Платёж не найден. Попробуйте позже.", show_alert=True)
+
+@dp.message(Command("pay_help"))
+async def pay_help(message: types.Message):
+    await message.answer(
+        "💡 Как оплатить:
+"
+        "1. Введите <code>/pay 150</code> (число — сумма в рублях)
+"
+        "2. Перейдите по ссылке и оплатите
+"
+        "3. Нажмите «Я оплатил»
+
+"
+        "🎁 Примеры:
+"
+        "• 30 руб = 1 примерка
+"
+        "• 90 руб = 3 примерки
+"
+        "• 150 руб = 5 примерок
+"
+        "• 300 руб = 10 примерок"
+    )
+
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
     while True:
