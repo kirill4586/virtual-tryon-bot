@@ -937,6 +937,21 @@ async def handle_custom_payment(callback_query: types.CallbackQuery):
         "Например: <code>100</code> - это 3 примерки"
     )
     await callback_query.answer()
+
+@dp.callback_query(F.data == "standard_payment")
+async def handle_standard_payment(callback_query: types.CallbackQuery):
+    label = f"tryon_{callback_query.from_user.id}"
+    payment_link = await PaymentManager.create_payment_link(amount=PRICE_PER_TRY, label=label)
+    
+    await callback_query.message.answer(
+        f"💳 Оплатите <b>{PRICE_PER_TRY} руб.</b> и получите <b>1 примерку</b>\n\n"
+        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+        "После оплаты нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{label}")]
+        )
+    )
+    await callback_query.answer()
 	
 	@dp.callback_query(F.data == "standard_payment")
 async def handle_standard_payment(callback_query: types.CallbackQuery):
