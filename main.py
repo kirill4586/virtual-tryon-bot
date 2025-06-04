@@ -929,6 +929,30 @@ async def check_payment_custom(callback: types.CallbackQuery):
     else:
         await callback.answer("❌ Платёж не найден. Попробуйте позже.", show_alert=True)
 
+# Добавьте этот обработчик после предыдущего
+@dp.callback_query(F.data == "custom_payment")
+async def handle_custom_payment(callback_query: types.CallbackQuery):
+    await callback_query.message.answer(
+        "💵 Введите сумму в рублях, которую хотите оплатить (минимальная сумма - 30 руб):\n\n"
+        "Например: <code>100</code> - это 3 примерки"
+    )
+    await callback_query.answer()
+	
+	@dp.callback_query(F.data == "standard_payment")
+async def handle_standard_payment(callback_query: types.CallbackQuery):
+    label = f"tryon_{callback_query.from_user.id}"
+    payment_link = await PaymentManager.create_payment_link(amount=PRICE_PER_TRY, label=label)
+    
+    await callback_query.message.answer(
+        f"💳 Оплатите <b>{PRICE_PER_TRY} руб.</b> и получите <b>1 примерку</b>\n\n"
+        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+        "После оплаты нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{label}")]
+        ])
+    )
+    await callback_query.answer()
+
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
     await message.answer(
@@ -948,12 +972,42 @@ async def handle_balance(message: types.Message):
     tries_left = await get_user_tries(message.from_user.id)
     await message.answer(
         f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Чтобы пополнить баланс, нажмите кнопку ниже:",
+        "Вы можете:\n"
+        "1. Ввести сумму для оплаты (например, <code>100</code>)\n"
+        "2. Использовать команду <code>/pay СУММА</code>\n"
+        "3. Нажать кнопку ниже для стандартной оплаты",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=CUSTOM_PAYMENT_BTN_TEXT, callback_data="custom_payment")]
+            [InlineKeyboardButton(text="💳 Оплатить 30 руб", callback_data="standard_payment")],
+            [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
         ])
     )
 
+# Добавьте этот обработчик после предыдущего
+@dp.message(F.text.regexp(r'^\d+$'))
+async def handle_custom_amount(message: types.Message):
+    try:
+        amount = int(message.text)
+        if amount < MIN_PAYMENT_AMOUNT:
+            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
+            return
+
+        label = f"tryon_{message.from_user.id}"
+        payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
+
+        text = (
+            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>\n\n"
+            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:"
+        )
+
+        await message.answer(
+            text,
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
+            ])
+        )
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
     while True:
