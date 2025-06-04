@@ -978,7 +978,7 @@ async def handle_payment_90(callback_query: types.CallbackQuery):
         "После оплаты нажмите кнопку ниже:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_90_{callback_query.from_user.id}")]
-        )
+        ])
     )
     await callback_query.answer()
 
