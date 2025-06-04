@@ -477,7 +477,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         logger.error(f"Welcome error for {user_id}: {e}")
 
 @dp.message(Command("start"))
-@dp.message(F.text)
+@dp.message(F.text & ~F.text.regexp(r'^\d+$'))  # Исключаем чисто числовые сообщения
 async def handle_start(message: types.Message):
     if await is_processing(message.from_user.id):
         await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
