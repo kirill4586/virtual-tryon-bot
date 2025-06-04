@@ -954,7 +954,61 @@ async def handle_standard_payment(callback_query: types.CallbackQuery):
         ])
     )
     await callback_query.answer()
+	
+@dp.callback_query(F.data == "payment_options")
+async def show_payment_options(callback_query: types.CallbackQuery):
+    await callback_query.message.edit_text(
+        "Выберите сумму оплаты:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 30 руб (1 примерка)", callback_data="standard_payment")],
+            [InlineKeyboardButton(text="💳 90 руб (3 примерки)", callback_data="payment_90")],
+            [InlineKeyboardButton(text="💳 300 руб (10 примерок)", callback_data="payment_300")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_balance")]
+        ])
+    )
+    await callback_query.answer()
+@dp.callback_query(F.data == "payment_90")
+async def handle_payment_90(callback_query: types.CallbackQuery):
+    label = f"tryon_{callback_query.from_user.id}"
+    payment_link = await PaymentManager.create_payment_link(amount=90, label=label)
+    
+    await callback_query.message.edit_text(
+        "💳 Оплатите <b>90 руб.</b> и получите <b>3 примерки</b>\n\n"
+        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+        "После оплаты нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_90_{callback_query.from_user.id}")]
+        )
+    )
+    await callback_query.answer()
 
+@dp.callback_query(F.data == "payment_300")
+async def handle_payment_300(callback_query: types.CallbackQuery):
+    label = f"tryon_{callback_query.from_user.id}"
+    payment_link = await PaymentManager.create_payment_link(amount=300, label=label)
+    
+    await callback_query.message.edit_text(
+        "💳 Оплатите <b>300 руб.</b> и получите <b>10 примерок</b>\n\n"
+        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
+        "После оплаты нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_300_{callback_query.from_user.id}")]
+        )
+    )
+    await callback_query.answer()
+
+@dp.callback_query(F.data == "back_to_balance")
+async def back_to_balance(callback_query: types.CallbackQuery):
+    tries_left = await get_user_tries(callback_query.from_user.id)
+    await callback_query.message.edit_text(
+        f"🔄 У вас осталось {tries_left} примерок\n\n"
+        "Выберите сумму для оплаты:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
+            [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
+        ])
+    )
+    await callback_query.answer()
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
     await message.answer(
@@ -974,12 +1028,9 @@ async def handle_balance(message: types.Message):
     tries_left = await get_user_tries(message.from_user.id)
     await message.answer(
         f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Вы можете:\n"
-        "1. Ввести сумму для оплаты (например, <code>100</code>)\n"
-        "2. Использовать команду <code>/pay СУММА</code>\n"
-        "3. Нажать кнопку ниже для стандартной оплаты",
+        "Выберите сумму для оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить 30 руб", callback_data="standard_payment")],
+            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")],
             [InlineKeyboardButton(text="💳 Оплатить произвольную сумму", callback_data="custom_payment")]
         ])
     )
