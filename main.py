@@ -45,6 +45,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
+CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
 TABLE_ID = int(os.getenv("TABLE_ID"))
@@ -938,6 +939,20 @@ async def pay_help(message: types.Message):
         "• 300 руб = 10 примерок"
     )
 
+
+
+@dp.message(Command("balance"))
+async def handle_balance(message: types.Message):
+    tries_left = await get_user_tries(message.from_user.id)
+    await message.answer(
+        f"🔄 У вас осталось {tries_left} примерок
+
+"
+        "Чтобы пополнить баланс, нажмите кнопку ниже:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=CUSTOM_PAYMENT_BTN_TEXT, callback_data="custom_payment")]
+        ])
+    )
 
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
