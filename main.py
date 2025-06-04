@@ -953,7 +953,7 @@ async def handle_standard_payment(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 	
-	@dp.callback_query(F.data == "standard_payment")
+@dp.callback_query(F.data == "standard_payment")
 async def handle_standard_payment(callback_query: types.CallbackQuery):
     label = f"tryon_{callback_query.from_user.id}"
     payment_link = await PaymentManager.create_payment_link(amount=PRICE_PER_TRY, label=label)
