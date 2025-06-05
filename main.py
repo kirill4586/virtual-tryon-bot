@@ -45,6 +45,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
+# Убраны YMONEY переменные из конфигурации
 CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
 MIN_PAYMENT_AMOUNT = 30  # Минимальная сумма оплаты
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -53,17 +54,125 @@ TABLE_ID = int(os.getenv("TABLE_ID"))
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-YMONEY_TOKEN = os.getenv("YMONEY_TOKEN")
-YMONEY_WALLET = os.getenv("YMONEY_WALLET")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
 FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
-UPLOAD_DIR = "uploads"
-MODELS_BUCKET = "models"
-EXAMPLES_BUCKET = "primery"
-UPLOADS_BUCKET = "uploads"  # Бакет для загружаемых файлов
-SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
-MODELS_PER_PAGE = 3
-EXAMPLES_PER_PAGE = 3
+
+# Упрощенная функция для создания ссылки на DonationAlerts
+def make_donation_link(user: types.User, amount: int) -> str:
+    username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
+    message = username.replace(" ", "_")
+    return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
+
+# Удален весь класс PaymentManager и связанные с ним методы
+
+# Переработанные обработчики платежей
+@dp.callback_query(F.data == "payment_options")
+async def show_payment_methods(callback_query: types.CallbackQuery):
+    """Меню выбора суммы оплаты через DonationAlerts"""
+    user = callback_query.from_user
+    await callback_query.message.edit_text(
+        "Выберите сумму оплаты:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 30 руб (1 примерка)", 
+                    url=make_donation_link(user, 30)
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 90 руб (3 примерки)", 
+                    url=make_donation_link(user, 90)
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 300 руб (10 примерок)", 
+                    url=make_donation_link(user, 300)
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Другая сумма", 
+                    url="https://www.donationalerts.com/r/vasiliy4434")
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation")
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад", 
+                    callback_data="back_to_balance")
+            ]
+        ])
+    )
+    await callback_query.answer()
+
+@dp.callback_query(F.data == "confirm_donation")
+async def confirm_donation(callback_query: types.CallbackQuery):
+    user = callback_query.from_user
+    await callback_query.message.answer(
+        "✅ Спасибо! Мы проверим ваш платёж и активируем доступ в течение нескольких минут.\n\n"
+        "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти. "
+        "При необходимости — напишите нам в поддержку."
+    )
+    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
+    await callback_query.answer()
+
+@dp.message(Command("pay"))
+async def handle_pay_command(message: types.Message):
+    try:
+        amount = int(message.text.split()[1])
+        if amount < PRICE_PER_TRY:
+            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
+            return
+
+        donation_link = make_donation_link(message.from_user, amount)
+        
+        await message.answer(
+            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
+            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
+            )
+        )
+    except (IndexError, ValueError):
+        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
+
+@dp.message(F.text.regexp(r'^\d+$'))
+async def handle_custom_amount(message: types.Message):
+    try:
+        amount = int(message.text)
+        if amount < MIN_PAYMENT_AMOUNT:
+            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
+            return
+
+        donation_link = make_donation_link(message.from_user, amount)
+        
+        await message.answer(
+            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
+            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
+            ])
+        )
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
+
+@dp.message(Command("pay_help"))
+async def pay_help(message: types.Message):
+    await message.answer(
+        "💡 Как оплатить через DonationAlerts:\n"
+        "1. Введите <code>/pay 150</code> (число — сумма в рублях)\n"
+        "2. Перейдите по ссылке и оплатите\n"
+        "3. Нажмите «Я оплатил»\n\n"
+        "🎁 Примеры:\n"
+        f"• {PRICE_PER_TRY} руб = 1 примерка\n"
+        f"• {PRICE_PER_TRY*3} руб = 3 примерки\n"
+        f"• {PRICE_PER_TRY*5} руб = 5 примерок\n"
+        f"• {PRICE_PER_TRY*10} руб = 10 примерок"
+    )
 
 # Инициализация клиентов
 bot = Bot(
@@ -91,6 +200,11 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     supabase = None
 
+def make_donation_link(user: types.User, amount: int) -> str:
+    username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
+    message = username.replace(" ", "_")
+    return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
+	
 async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
     """Загружает файл в Supabase Storage"""
     if not supabase:
@@ -943,18 +1057,29 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
 	
 @dp.callback_query(F.data == "card_payment_menu")
 async def show_card_payment_options(callback_query: types.CallbackQuery):
-    """Меню оплаты картой (старое меню)"""
+    user = callback_query.from_user
     await callback_query.message.edit_text(
-        "Выберите сумму оплаты (картой):",
+        "Выберите сумму оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 30 руб (1 примерка)", callback_data="standard_payment")],
-            [InlineKeyboardButton(text="💳 90 руб (3 примерки)", callback_data="payment_90")],
-            [InlineKeyboardButton(text="💳 300 руб (10 примерок)", callback_data="payment_300")],
-            [InlineKeyboardButton(text="💳 Другая сумма", callback_data="custom_payment")],
+            [InlineKeyboardButton(text="💳 30 руб (1 примерка)", url=make_donation_link(user, 30))],
+            [InlineKeyboardButton(text="💳 90 руб (3 примерки)", url=make_donation_link(user, 90))],
+            [InlineKeyboardButton(text="💳 300 руб (10 примерок)", url=make_donation_link(user, 300))],
+            [InlineKeyboardButton(text="💳 Другая сумма", url="https://www.donationalerts.com/r/vasiliy4434")],
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="payment_options")]
         ])
     )
     await callback_query.answer()
+@dp.callback_query(F.data == "confirm_donation")
+async def confirm_donation(callback_query: types.CallbackQuery):
+    user = callback_query.from_user
+    await callback_query.message.answer(
+        "✅ Спасибо! Мы проверим ваш платёж и активируем доступ в течение нескольких минут.\n\n"
+        "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти. "
+        "При необходимости — напишите нам в поддержку."
+    )
+    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
+    await callback_query.answer()	
 
 @dp.callback_query(F.data == "sbp_payment_menu")
 async def show_sbp_payment_options(callback_query: types.CallbackQuery):
