@@ -805,16 +805,19 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
                 InlineKeyboardButton(
                     text="💳 30 руб (1 примерка)", 
                     url=make_donation_link(user, 30, fixed=True)
+                )
             ],
             [
                 InlineKeyboardButton(
                     text="💳 90 руб (3 примерки)", 
                     url=make_donation_link(user, 90, fixed=True)
+                )
             ],
             [
                 InlineKeyboardButton(
                     text="💳 300 руб (10 примерок)", 
                     url=make_donation_link(user, 300, fixed=True)
+                )
             ],
             [
                 InlineKeyboardButton(
@@ -865,10 +868,11 @@ async def handle_pay_command(message: types.Message):
             "После оплаты нажмите кнопку ниже:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            ])
+            ]),
+            parse_mode=ParseMode.HTML
         )
     except (IndexError, ValueError):
-        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
+        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)", parse_mode=ParseMode.HTML)
 
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
@@ -881,7 +885,8 @@ async def pay_help(message: types.Message):
         f"• {PRICE_PER_TRY} руб = 1 примерка\n"
         f"• {PRICE_PER_TRY*3} руб = 3 примерки\n"
         f"• {PRICE_PER_TRY*5} руб = 5 примерок\n"
-        f"• {PRICE_PER_TRY*10} руб = 10 примерок"
+        f"• {PRICE_PER_TRY*10} руб = 10 примерок",
+        parse_mode=ParseMode.HTML
     )
 
 @dp.message(Command("balance"))
