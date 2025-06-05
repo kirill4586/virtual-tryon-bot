@@ -139,7 +139,7 @@ async def handle_pay_command(message: types.Message):
             "После оплаты нажмите кнопку ниже:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            )
+            ])
         )
     except (IndexError, ValueError):
         await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
@@ -993,31 +993,26 @@ async def check_payment(callback_query: types.CallbackQuery):
         logger.error(f"Error checking payment: {e}")
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
 
-@dp.message(Command("pay"))
-async def handle_pay_command(message: types.Message):
+@dp.message(F.text.regexp(r'^\d+$'))
+async def handle_custom_amount(message: types.Message):
     try:
-        amount = int(message.text.split()[1])
-        if amount < PRICE_PER_TRY:
-            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
+        amount = int(message.text)
+        if amount < MIN_PAYMENT_AMOUNT:
+            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
             return
 
-        label = f"tryon_{message.from_user.id}"
-        payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
-
-        text = (
-            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>\n\n"
-            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:"
-        )
-
+        donation_link = make_donation_link(message.from_user, amount)
+        
         await message.answer(
-            text,
+            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
+            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
             ])
         )
-    except (IndexError, ValueError):
-        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
+    except ValueError:
+        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
 
 
 
