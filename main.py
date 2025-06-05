@@ -213,7 +213,7 @@ class PaymentManager:
         )
 
     @staticmethod
-async def create_sbp_link(amount: float, label: str) -> str:
+    async def create_sbp_link(amount: float, label: str) -> str:
     """Создает ссылку для оплаты через СБП"""
     return (
         f"https://yoomoney.ru/quickpay/confirm.xml?"
