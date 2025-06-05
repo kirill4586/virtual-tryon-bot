@@ -212,19 +212,19 @@ class PaymentManager:
             f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
         )
 
-    @staticmethod
+        @staticmethod
     async def create_sbp_link(amount: float, label: str) -> str:
-    """Создает ссылку для оплаты через СБП"""
-    return (
-        f"https://yoomoney.ru/quickpay/confirm.xml?"
-        f"receiver={YMONEY_WALLET}&"
-        f"quickpay-form=small&"
-        f"paymentType=SB&"  # SB — СБП
-        f"sum={amount}&"
-        f"label={label}&"
-        f"targets=Оплата%20виртуальной%20примерки&"
-        f"comment=Пополнение%20примерочной%20бота"
-    )
+        """Создает ссылку для оплаты через СБП"""
+        return (
+            f"https://yoomoney.ru/quickpay/confirm.xml?"
+            f"receiver={YMONEY_WALLET}&"
+            f"quickpay-form=small&"
+            f"paymentType=SB&"  # SB — СБП
+            f"sum={amount}&"
+            f"label={label}&"
+            f"targets=Оплата%20виртуальной%20примерки&"
+            f"comment=Пополнение%20примерочной%20бота"
+        )
 
 
     @staticmethod
