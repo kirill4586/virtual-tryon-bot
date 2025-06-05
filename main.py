@@ -87,121 +87,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     supabase = None
 
-def make_donation_link(user: types.User, amount: int, fixed: bool = False) -> str:
-    """Генерирует ссылку для оплаты через DonationAlerts с фиксированной суммой"""
-    username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
-    message = username.replace(" ", "_")
-    if fixed:
-        return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}&fixed_amount=true"
-    else:
-        return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
-
-async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
-    """Загружает файл в Supabase Storage"""
-    if not supabase:
-        return False
-    
-    try:
-        file_name = os.path.basename(file_path)
-        destination_path = f"{user_id}/{file_type}/{file_name}"
-        
-        with open(file_path, 'rb') as f:
-            res = supabase.storage.from_(UPLOADS_BUCKET).upload(
-                path=destination_path,
-                file=f,
-                file_options={"content-type": "image/jpeg"}
-            )
-        
-        logger.info(f"File {file_path} uploaded to Supabase as {destination_path}")
-        return True
-    except Exception as e:
-        logger.error(f"Error uploading file to Supabase: {e}")
-        return False
-
-async def download_from_supabase(user_id: int, file_type: str, file_name: str, local_path: str):
-    """Скачивает файл из Supabase Storage"""
-    if not supabase:
-        return False
-    
-    try:
-        source_path = f"{user_id}/{file_type}/{file_name}"
-        res = supabase.storage.from_(UPLOADS_BUCKET).download(source_path)
-        
-        with open(local_path, 'wb') as f:
-            f.write(res)
-        
-        logger.info(f"File {source_path} downloaded from Supabase to {local_path}")
-        return True
-    except Exception as e:
-        logger.error(f"Error downloading file from Supabase: {e}")
-        return False
-
-class BaserowAPI:
-    def __init__(self):
-        self.base_url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}"
-        self.headers = {
-            "Authorization": f"Token {BASEROW_TOKEN}",
-            "Content-Type": "application/json"
-        }
-
-    async def upsert_row(self, user_id: int, username: str, data: dict):
-        try:
-            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Baserow GET error: {resp.status}")
-                        return None
-                    rows = await resp.json()
-                    
-                base_data = {
-                    "user_id": str(user_id),
-                    "username": username or ""
-                }
-                    
-                if rows.get("results"):
-                    row_id = rows["results"][0]["id"]
-                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
-                    async with session.patch(update_url, headers=self.headers, json={**base_data, **data}) as resp:
-                        return await resp.json()
-                else:
-                    async with session.post(f"{self.base_url}/?user_field_names=true", 
-                                         headers=self.headers, 
-                                         json={**base_data, **data}) as resp:
-                        return await resp.json()
-        except Exception as e:
-            logger.error(f"Baserow API exception: {e}")
-            return None
-
-    async def reset_flags(self, user_id: int):
-        """Сбрасывает все флажки для указанного пользователя"""
-        try:
-            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Baserow GET error: {resp.status}")
-                        return False
-                    rows = await resp.json()
-                    
-                if rows.get("results"):
-                    row_id = rows["results"][0]["id"]
-                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
-                    reset_data = {
-                        "photo1_received": False,
-                        "photo2_received": False,
-                        "ready": False
-                    }
-                    async with session.patch(update_url, headers=self.headers, json=reset_data) as resp:
-                        return resp.status == 200
-        except Exception as e:
-            logger.error(f"Error resetting flags: {e}")
-            return False
-
-baserow = BaserowAPI()
-
 async def get_user_tries(user_id: int) -> int:
     """Получает количество доступных примерок для пользователя"""
     try:
@@ -695,17 +580,21 @@ async def handle_photo(message: types.Message):
         if tries_left <= 0:
             await message.answer(
                 "🚫 У вас закончились бесплатные примерки.\n\n"
-                "💵 Стоимость одной примерки: 30 руб.\n"
-                "После оплаты вам будет доступно количество примерок в соответствии с внесенной суммой.\n\n"
-                "Например:\n"
-                "30 руб = 1 примерка\n"
-                "60 руб = 2 примерки\n"
-                "90 руб = 3 примерки и т.д.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
+                "Для продолжения работы оплатите услугу:",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💳 Оплатить", 
+                            url="https://www.donationalerts.com/r/primerochnay777"
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="✅ Я оплатил", 
+                            callback_data="confirm_donation"
+                        )
                     ]
-                )
+                ])
             )
             return
             
@@ -796,45 +685,21 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Меню выбора суммы оплаты через DonationAlerts с фиксированными суммами"""
+    """Упрощенное меню оплаты с одной кнопкой"""
     user = callback_query.from_user
     await callback_query.message.edit_text(
-        "Выберите сумму оплаты:",
+        "Для продолжения работы с ботом необходимо оплатить услугу:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 30 руб (1 примерка)", 
-                    url=make_donation_link(user, 30, fixed=True)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 90 руб (3 примерки)", 
-                    url=make_donation_link(user, 90, fixed=True)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 300 руб (10 примерок)", 
-                    url=make_donation_link(user, 300, fixed=True)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Другая сумма (от 30 руб)", 
-                    url="https://www.donationalerts.com/r/vasiliy4434"
+                    text="💳 Оплатить", 
+                    url="https://www.donationalerts.com/r/primerochnay777"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="✅ Я оплатил", 
                     callback_data="confirm_donation"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Назад", 
-                    callback_data="back_to_balance"
                 )
             ]
         ])
@@ -854,39 +719,42 @@ async def confirm_donation(callback_query: types.CallbackQuery):
 
 @dp.message(Command("pay"))
 async def handle_pay_command(message: types.Message):
-    try:
-        amount = int(message.text.split()[1])
-        if amount < PRICE_PER_TRY:
-            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
-            return
-
-        donation_link = make_donation_link(message.from_user, amount, fixed=True)
-        
-        await message.answer(
-            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
-            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            ]),
-            parse_mode=ParseMode.HTML
-        )
-    except (IndexError, ValueError):
-        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)", parse_mode=ParseMode.HTML)
+    """Обработчик команды /pay - сразу перенаправляет на страницу оплаты"""
+    await message.answer(
+        "Переход на страницу оплаты:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить", 
+                    url="https://www.donationalerts.com/r/primerochnay777"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
+                )
+            ]
+        ])
+    )
 
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
+    """Упрощенная справка по оплате"""
     await message.answer(
-        "💡 Как оплатить через DonationAlerts:\n"
-        "1. Введите <code>/pay 150</code> (число — сумма в рублях)\n"
-        "2. Перейдите по ссылке и оплатите\n"
+        "💡 Как оплатить:\n"
+        "1. Нажмите кнопку «Оплатить»\n"
+        "2. Оплатите услугу на открывшейся странице\n"
         "3. Нажмите «Я оплатил»\n\n"
-        "🎁 Примеры:\n"
-        f"• {PRICE_PER_TRY} руб = 1 примерка\n"
-        f"• {PRICE_PER_TRY*3} руб = 3 примерки\n"
-        f"• {PRICE_PER_TRY*5} руб = 5 примерок\n"
-        f"• {PRICE_PER_TRY*10} руб = 10 примерок",
-        parse_mode=ParseMode.HTML
+        "После проверки платежа вам будет доступна виртуальная примерка.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить", 
+                    url="https://www.donationalerts.com/r/primerochnay777"
+                )
+            ]
+        ])
     )
 
 @dp.message(Command("balance"))
@@ -894,10 +762,21 @@ async def handle_balance(message: types.Message):
     tries_left = await get_user_tries(message.from_user.id)
     await message.answer(
         f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Выберите действие:",
+        "Для продолжения работы оплатите услугу:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        ])  # Добавлена закрывающая квадратная скобка
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить", 
+                    url="https://www.donationalerts.com/r/primerochnay777"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
+                )
+            ]
+        ])
     )
 
 @dp.callback_query(F.data == "back_to_balance")
@@ -905,10 +784,21 @@ async def back_to_balance(callback_query: types.CallbackQuery):
     tries_left = await get_user_tries(callback_query.from_user.id)
     await callback_query.message.edit_text(
         f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Выберите действие:",
+        "Для продолжения работы оплатите услугу:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        ])  # Добавлена закрывающая квадратная скобка
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить", 
+                    url="https://www.donationalerts.com/r/primerochnay777"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
+                )
+            ]
+        ])
     )
     await callback_query.answer()
 
@@ -988,10 +878,11 @@ async def check_results():
                                 supabase.storage.from_(UPLOADS_BUCKET).upload(
                                     path=supabase_path,
                                     file=f,
-                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                          "image/png" if file_ext == '.png' else
-                                          "image/webp"}
-                                )
+                                    file_options={"content-type": "image/jpeg"
+									if file_ext in ('.jpg', '.jpeg') else
+                                    "image/png" if file_ext == '.png' else
+                                    "image/webp"}
+                            )
                             logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
                         except Exception as upload_error:
                             logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
