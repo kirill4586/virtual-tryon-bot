@@ -940,7 +940,7 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 	
-	@dp.callback_query(F.data == "card_payment_menu")
+@dp.callback_query(F.data == "card_payment_menu")
 async def show_card_payment_options(callback_query: types.CallbackQuery):
     """Меню оплаты картой (старое меню)"""
     await callback_query.message.edit_text(
