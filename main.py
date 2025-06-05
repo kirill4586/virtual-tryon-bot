@@ -847,27 +847,28 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
 @dp.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(callback_query: types.CallbackQuery):
-    payment_label = callback_query.data.replace("check_payment_", "")
-    is_paid = await PaymentManager.check_payment(payment_label)
-    
-    if is_paid:
-        await callback_query.message.edit_text("✅ Оплата подтверждена!")
-    else:
-        await callback_query.answer("❌ Платеж не найден", show_alert=True)
-        await callback_query.message.edit_text(
-            "❌ Платеж не найден",
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [
-                        InlineKeyboardButton(
-                            text="🔄 Проверить ещё раз", 
-                            callback_data=f"check_payment_{payment_label}"
-                        )
+    try:  # <--- Добавьте этот блок try
+        payment_label = callback_query.data.replace("check_payment_", "")
+        is_paid = await PaymentManager.check_payment(payment_label)
+        
+        if is_paid:
+            await callback_query.message.edit_text("✅ Оплата подтверждена!")
+        else:
+            await callback_query.answer("❌ Платеж не найден", show_alert=True)
+            await callback_query.message.edit_text(
+                "❌ Платеж не найден",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="🔄 Проверить ещё раз", 
+                                callback_data=f"check_payment_{payment_label}"
+                            )
+                        ]
                     ]
-                ]
+                )
             )
-        )
-            
+                
     except Exception as e:
         logger.error(f"Error checking payment: {e}")
         await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
