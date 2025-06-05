@@ -160,7 +160,7 @@ async def handle_custom_amount(message: types.Message):
     "После оплаты нажмите кнопку ниже:",
     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-    )
+    ])
 )
     except ValueError:
         await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
