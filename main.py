@@ -897,7 +897,7 @@ async def handle_balance(message: types.Message):
         "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        )
+        ])  # Добавлена закрывающая квадратная скобка
     )
 
 @dp.callback_query(F.data == "back_to_balance")
@@ -908,7 +908,7 @@ async def back_to_balance(callback_query: types.CallbackQuery):
         "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        )
+        ])  # Добавлена закрывающая квадратная скобка
     )
     await callback_query.answer()
 
