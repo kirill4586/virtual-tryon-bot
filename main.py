@@ -212,7 +212,7 @@ class PaymentManager:
             f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
         )
 
-        @staticmethod
+    @staticmethod
     async def create_sbp_link(amount: float, label: str) -> str:
         """Создает ссылку для оплаты через СБП"""
         return (
