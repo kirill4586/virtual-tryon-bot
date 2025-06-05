@@ -5,8 +5,6 @@ import aiohttp
 import shutil
 import sys
 import time
-import sys
-import time
 if sys.platform == "linux":
     import fcntl
     try:
@@ -45,7 +43,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Конфигурация
-# Убраны YMONEY переменные из конфигурации
 CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
 MIN_PAYMENT_AMOUNT = 30  # Минимальная сумма оплаты
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -56,128 +53,13 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
 FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
-
-# Упрощенная функция для создания ссылки на DonationAlerts
-def make_donation_link(user: types.User, amount: int) -> str:
-    username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
-    message = username.replace(" ", "_")
-    return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
-
-# Удален весь класс PaymentManager и связанные с ним методы
-
-# Переработанные обработчики платежей
-@dp.callback_query(F.data == "payment_options")
-async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Меню выбора суммы оплаты через DonationAlerts"""
-    user = callback_query.from_user
-    await callback_query.message.edit_text(
-        "Выберите сумму оплаты:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-    [
-        InlineKeyboardButton(
-            text="💳 30 руб (1 примерка)", 
-            url=make_donation_link(user, 30)
-        )
-    ],
-    [
-        InlineKeyboardButton(
-            text="💳 90 руб (3 примерки)", 
-            url=make_donation_link(user, 90)
-        )
-    ],
-    [
-        InlineKeyboardButton(
-            text="💳 300 руб (10 примерок)", 
-            url=make_donation_link(user, 300)
-        )
-    ],
-    [
-        InlineKeyboardButton(
-            text="💳 Другая сумма", 
-            url="https://www.donationalerts.com/r/vasiliy4434"
-        )
-    ],
-    [
-        InlineKeyboardButton(
-            text="✅ Я оплатил", 
-            callback_data="confirm_donation"
-        )
-    ],
-    [
-        InlineKeyboardButton(
-            text="🔙 Назад", 
-            callback_data="back_to_balance"
-        )
-    ]
-])
-    await callback_query.answer()
-
-@dp.callback_query(F.data == "confirm_donation")
-async def confirm_donation(callback_query: types.CallbackQuery):
-    user = callback_query.from_user
-    await callback_query.message.answer(
-        "✅ Спасибо! Мы проверим ваш платёж и активируем доступ в течение нескольких минут.\n\n"
-        "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти. "
-        "При необходимости — напишите нам в поддержку."
-    )
-    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
-    await callback_query.answer()
-
-@dp.message(Command("pay"))
-async def handle_pay_command(message: types.Message):
-    try:
-        amount = int(message.text.split()[1])
-        if amount < PRICE_PER_TRY:
-            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
-            return
-
-        donation_link = make_donation_link(message.from_user, amount)
-        
-        await message.answer(
-            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
-            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            ])
-        )
-    except (IndexError, ValueError):
-        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
-
-@dp.message(F.text.regexp(r'^\d+$'))
-async def handle_custom_amount(message: types.Message):
-    try:
-        amount = int(message.text)
-        if amount < MIN_PAYMENT_AMOUNT:
-            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
-            return
-
-        donation_link = make_donation_link(message.from_user, amount)
-        
-        await message.answer(
-    f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
-    f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
-    "После оплаты нажмите кнопку ниже:",
-    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-    ])
-)
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
-
-@dp.message(Command("pay_help"))
-async def pay_help(message: types.Message):
-    await message.answer(
-        "💡 Как оплатить через DonationAlerts:\n"
-        "1. Введите <code>/pay 150</code> (число — сумма в рублях)\n"
-        "2. Перейдите по ссылке и оплатите\n"
-        "3. Нажмите «Я оплатил»\n\n"
-        "🎁 Примеры:\n"
-        f"• {PRICE_PER_TRY} руб = 1 примерка\n"
-        f"• {PRICE_PER_TRY*3} руб = 3 примерки\n"
-        f"• {PRICE_PER_TRY*5} руб = 5 примерок\n"
-        f"• {PRICE_PER_TRY*10} руб = 10 примерок"
-    )
+UPLOAD_DIR = "uploads"
+MODELS_BUCKET = "models"
+EXAMPLES_BUCKET = "examples"
+UPLOADS_BUCKET = "uploads"
+SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+EXAMPLES_PER_PAGE = 3
+MODELS_PER_PAGE = 3
 
 # Инициализация клиентов
 bot = Bot(
@@ -209,7 +91,7 @@ def make_donation_link(user: types.User, amount: int) -> str:
     username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
     message = username.replace(" ", "_")
     return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
-	
+
 async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
     """Загружает файл в Supabase Storage"""
     if not supabase:
@@ -316,62 +198,6 @@ class BaserowAPI:
 
 baserow = BaserowAPI()
 
-class PaymentManager:
-    @staticmethod
-    async def create_payment_link(amount: float, label: str) -> str:
-        """Создает ссылку для оплаты через ЮMoney"""
-        return (
-            f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver=4100118715530282&"
-            f"quickpay-form=small&"
-            f"paymentType=AC,PC&"  # AC — карта, PC — ЮMoney (оба варианта)
-            f"sum={amount}&"
-            f"label={label}&"
-            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
-            f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
-        )
-
-    @staticmethod
-    async def create_sbp_link(amount: float, label: str) -> str:
-        """Создает ссылку для оплаты через СБП"""
-        return (
-            f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver={YMONEY_WALLET}&"
-            f"quickpay-form=small&"
-            f"paymentType=sbp&"  # SB — СБП
-            f"sum={amount}&"
-            f"label={label}&"
-            f"targets=Оплата%20виртуальной%20примерки&"
-            f"comment=Пополнение%20примерочной%20бота"
-        )
-
-
-    @staticmethod
-    async def check_payment(label: str) -> bool:
-        """Проверяет наличие платежа по метке"""
-        url = "https://yoomoney.ru/api/operation-history"
-        headers = {
-            "Authorization": f"Bearer {YMONEY_TOKEN}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        data = {
-            "type": "deposition",
-            "label": label,
-            "records": "1"
-        }
-        
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, data=data) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        return result.get("operations", []) != []
-                    else:
-                        logger.error(f"YooMoney API error: {resp.status} - {await resp.text()}")
-        except Exception as e:
-            logger.error(f"Error checking payment: {e}")
-        return False
-
 async def get_user_tries(user_id: int) -> int:
     """Получает количество доступных примерок для пользователя"""
     try:
@@ -382,7 +208,7 @@ async def get_user_tries(user_id: int) -> int:
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self.headers) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -401,7 +227,7 @@ async def update_user_tries(user_id: int, tries: int):
         }
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=self.headers) as resp:
+            async with session.get(url, headers=headers) as resp:
                 if resp.status == 200:
                     rows = await resp.json()
                     if rows.get("results"):
@@ -428,7 +254,6 @@ def list_all_files(bucket, prefix):
     except Exception as e:
         logger.error(f"❌ Ошибка обхода Supabase Storage в {prefix}: {e}")
     return files
-
 
 async def is_processing(user_id: int) -> bool:
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
@@ -965,83 +790,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-@dp.callback_query(F.data.startswith("check_payment_"))
-async def check_payment(callback_query: types.CallbackQuery):
-    try:  # <--- Добавьте этот блок try
-        payment_label = callback_query.data.replace("check_payment_", "")
-        is_paid = await PaymentManager.check_payment(payment_label)
-        
-        if is_paid:
-            await callback_query.message.edit_text("✅ Оплата подтверждена!")
-        else:
-            await callback_query.answer("❌ Платеж не найден", show_alert=True)
-            await callback_query.message.edit_text(
-                "❌ Платеж не найден",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="🔄 Проверить ещё раз", 
-                                callback_data=f"check_payment_{payment_label}"
-                            )
-                        ]
-                    ]
-                )
-            )
-                
-    except Exception as e:
-        logger.error(f"Error checking payment: {e}")
-        await callback_query.answer("❌ Ошибка при проверке оплаты. Попробуйте позже.", show_alert=True)
-
-@dp.message(F.text.regexp(r'^\d+$'))
-async def handle_custom_amount(message: types.Message):
-    try:
-        amount = int(message.text)
-        if amount < MIN_PAYMENT_AMOUNT:
-            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
-            return
-
-        donation_link = make_donation_link(message.from_user, amount)
-        
-        await message.answer(
-            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
-            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            ])
-        )
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
-
-
-
-# Добавьте этот обработчик после предыдущего
-@dp.callback_query(F.data == "custom_payment")
-async def handle_custom_payment(callback_query: types.CallbackQuery):
-    await callback_query.message.answer(
-        "💵 Введите сумму в рублях, которую хотите оплатить (минимальная сумма - 30 руб):\n\n"
-        "Например: <code>100</code> - это 3 примерки"
-    )
-    await callback_query.answer()
-
-
-	
-@dp.callback_query(F.data == "standard_payment")
-async def handle_standard_payment(callback_query: types.CallbackQuery):
-    label = f"tryon_{callback_query.from_user.id}"
-    payment_link = await PaymentManager.create_payment_link(amount=PRICE_PER_TRY, label=label)
-    
-    await callback_query.message.answer(
-        f"💳 Оплатите <b>{PRICE_PER_TRY} руб.</b> и получите <b>1 примерку</b>\n\n"
-        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
-        "После оплаты нажмите кнопку ниже:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_payment_{label}")]
-        ])
-    )
-    await callback_query.answer()
-	
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
     """Меню выбора суммы оплаты через DonationAlerts"""
@@ -1088,22 +836,7 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
         ])
     )
     await callback_query.answer()
-	
-@dp.callback_query(F.data == "card_payment_menu")
-async def show_card_payment_options(callback_query: types.CallbackQuery):
-    user = callback_query.from_user
-    await callback_query.message.edit_text(
-        "Выберите сумму оплаты:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 30 руб (1 примерка)", url=make_donation_link(user, 30))],
-            [InlineKeyboardButton(text="💳 90 руб (3 примерки)", url=make_donation_link(user, 90))],
-            [InlineKeyboardButton(text="💳 300 руб (10 примерок)", url=make_donation_link(user, 300))],
-            [InlineKeyboardButton(text="💳 Другая сумма", url="https://www.donationalerts.com/r/vasiliy4434")],
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="payment_options")]
-        ])
-    )
-    await callback_query.answer()
+
 @dp.callback_query(F.data == "confirm_donation")
 async def confirm_donation(callback_query: types.CallbackQuery):
     user = callback_query.from_user
@@ -1113,109 +846,33 @@ async def confirm_donation(callback_query: types.CallbackQuery):
         "При необходимости — напишите нам в поддержку."
     )
     await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
-    await callback_query.answer()	
-
-@dp.callback_query(F.data == "sbp_payment_menu")
-async def show_sbp_payment_options(callback_query: types.CallbackQuery):
-    """Меню оплаты через СБП"""
-    await callback_query.message.edit_text(
-        "Выберите сумму оплаты (СБП):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="📱 30 руб (1 примерка)", callback_data="sbp_30")],
-            [InlineKeyboardButton(text="📱 90 руб (3 примерки)", callback_data="sbp_90")],
-            [InlineKeyboardButton(text="📱 300 руб (10 примерок)", callback_data="sbp_300")],
-            [InlineKeyboardButton(text="📱 Другая сумма", callback_data="sbp_custom")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="payment_options")]
-        ])
-    )
-    await callback_query.answer()
-	
-	# Обработчики для СБП
-@dp.callback_query(F.data == "sbp_30")
-async def handle_sbp_30(callback_query: types.CallbackQuery):
-    await process_sbp_payment(callback_query, amount=30)
-
-@dp.callback_query(F.data == "sbp_90")
-async def handle_sbp_90(callback_query: types.CallbackQuery):
-    await process_sbp_payment(callback_query, amount=90)
-
-@dp.callback_query(F.data == "sbp_300")
-async def handle_sbp_300(callback_query: types.CallbackQuery):
-    await process_sbp_payment(callback_query, amount=300)
-
-@dp.callback_query(F.data == "sbp_custom")
-async def handle_sbp_custom(callback_query: types.CallbackQuery):
-    await callback_query.message.answer(
-        "💳 Введите сумму для оплаты через СБП (минимум 30 руб):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="sbp_payment_menu")]
-        ])
-    )
     await callback_query.answer()
 
-# Общий метод для СБП-платежей
-async def process_sbp_payment(callback_query: types.CallbackQuery, amount: int):
-    label = f"tryon_{callback_query.from_user.id}"
-    payment_link = await PaymentManager.create_sbp_link(amount=amount, label=label)
-    
-    await callback_query.message.edit_text(
-        f"📱 <b>Оплата {amount} руб. через СБП</b>\n\n"
-        "1️⃣ Нажмите <b>«Перейти к оплате»</b>\n"
-        "2️⃣ Подтвердите платеж в своем банке\n\n"
-        "⚠️ <i>Платеж поступит мне автоматически.</i>",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="➡️ Перейти к оплате", url=payment_link)],
-            [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_payment_{label}")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="sbp_payment_menu")]
-        ])
-    )
-    await callback_query.answer()
-	
-@dp.callback_query(F.data == "payment_90")
-async def handle_payment_90(callback_query: types.CallbackQuery):
-    label = f"tryon_{callback_query.from_user.id}"
-    payment_link = await PaymentManager.create_payment_link(amount=90, label=label)
-    
-    await callback_query.message.edit_text(
-        "💳 Оплатите <b>90 руб.</b> и получите <b>3 примерки</b>\n\n"
-        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
-        "После оплаты нажмите кнопку ниже:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_90_{callback_query.from_user.id}")]
-        ])
-    )
-    await callback_query.answer()
+@dp.message(Command("pay"))
+async def handle_pay_command(message: types.Message):
+    try:
+        amount = int(message.text.split()[1])
+        if amount < PRICE_PER_TRY:
+            await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
+            return
 
-@dp.callback_query(F.data == "payment_300")
-async def handle_payment_300(callback_query: types.CallbackQuery):
-    label = f"tryon_{callback_query.from_user.id}"
-    payment_link = await PaymentManager.create_payment_link(amount=300, label=label)
-    
-    await callback_query.message.edit_text(
-        "💳 Оплатите <b>300 руб.</b> и получите <b>10 примерок</b>\n\n"
-        f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
-        "После оплаты нажмите кнопку ниже:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_300_{callback_query.from_user.id}")]
-        ])
-    )
-    await callback_query.answer()
+        donation_link = make_donation_link(message.from_user, amount)
+        
+        await message.answer(
+            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
+            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
+            "После оплаты нажмите кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
+            ])
+        )
+    except (IndexError, ValueError):
+        await message.answer("❌ Используйте формат: <code>/pay 100</code> (сумма в рублях)")
 
-@dp.callback_query(F.data == "back_to_balance")
-async def back_to_balance(callback_query: types.CallbackQuery):
-    tries_left = await get_user_tries(callback_query.from_user.id)
-    await callback_query.message.edit_text(
-        f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Выберите действие:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]  # Оставили только эту кнопку
-        ])
-    )
-    await callback_query.answer()
 @dp.message(Command("pay_help"))
 async def pay_help(message: types.Message):
     await message.answer(
-        "💡 Как оплатить:\n"
+        "💡 Как оплатить через DonationAlerts:\n"
         "1. Введите <code>/pay 150</code> (число — сумма в рублях)\n"
         "2. Перейдите по ссылке и оплатите\n"
         "3. Нажмите «Я оплатил»\n\n"
@@ -1233,36 +890,22 @@ async def handle_balance(message: types.Message):
         f"🔄 У вас осталось {tries_left} примерок\n\n"
         "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]  # Оставили только эту кнопку
+            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
         ])
     )
 
-# Добавьте этот обработчик после предыдущего
-@dp.message(F.text.regexp(r'^\d+$'))
-async def handle_custom_amount(message: types.Message):
-    try:
-        amount = int(message.text)
-        if amount < MIN_PAYMENT_AMOUNT:
-            await message.answer(f"❌ Минимальная сумма — {MIN_PAYMENT_AMOUNT} руб.")
-            return
+@dp.callback_query(F.data == "back_to_balance")
+async def back_to_balance(callback_query: types.CallbackQuery):
+    tries_left = await get_user_tries(callback_query.from_user.id)
+    await callback_query.message.edit_text(
+        f"🔄 У вас осталось {tries_left} примерок\n\n"
+        "Выберите действие:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
+        ])
+    )
+    await callback_query.answer()
 
-        label = f"tryon_{message.from_user.id}"
-        payment_link = await PaymentManager.create_payment_link(amount=amount, label=label)
-
-        text = (
-            f"💳 Оплатите <b>{amount} руб.</b> и получите <b>{amount // PRICE_PER_TRY} примерок</b>\n\n"
-            f"👉 <a href='{payment_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:"
-        )
-
-        await message.answer(
-            text,
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"check_{amount}_{message.from_user.id}")]
-            ])
-        )
-    except ValueError:
-        await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
 async def check_results():
     logger.info("🔄 Starting check_results() loop...")
     while True:
@@ -1515,4 +1158,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-	
