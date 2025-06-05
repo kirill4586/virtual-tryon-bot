@@ -73,38 +73,43 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
     await callback_query.message.edit_text(
         "Выберите сумму оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 30 руб (1 примерка)", 
-                    url=make_donation_link(user, 30)
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 90 руб (3 примерки)", 
-                    url=make_donation_link(user, 90)
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 300 руб (10 примерок)", 
-                    url=make_donation_link(user, 300)
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Другая сумма", 
-                    url="https://www.donationalerts.com/r/vasiliy4434")
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил", 
-                    callback_data="confirm_donation")
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🔙 Назад", 
-                    callback_data="back_to_balance")
-            ]
-        ])
-    )
+    [
+        InlineKeyboardButton(
+            text="💳 30 руб (1 примерка)", 
+            url=make_donation_link(user, 30)
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="💳 90 руб (3 примерки)", 
+            url=make_donation_link(user, 90)
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="💳 300 руб (10 примерок)", 
+            url=make_donation_link(user, 300)
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="💳 Другая сумма", 
+            url="https://www.donationalerts.com/r/vasiliy4434"
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="✅ Я оплатил", 
+            callback_data="confirm_donation"
+        )
+    ],
+    [
+        InlineKeyboardButton(
+            text="🔙 Назад", 
+            callback_data="back_to_balance"
+        )
+    ]
+])
     await callback_query.answer()
 
 @dp.callback_query(F.data == "confirm_donation")
