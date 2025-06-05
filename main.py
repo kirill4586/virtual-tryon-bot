@@ -213,18 +213,19 @@ class PaymentManager:
         )
 
     @staticmethod
-    async def create_sbp_link(amount: float, label: str) -> str:
-        """Создает ссылку для оплаты через СБП"""
-        return (
-            f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver=4100118715530282&"
-            f"quickpay-form=small&"
-            f"paymentType=SB&"  # SB — СБП
-            f"sum={amount}&"
-            f"label={label}&"
-            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
-            f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
-        )
+async def create_sbp_link(amount: float, label: str) -> str:
+    """Создает ссылку для оплаты через СБП с предустановленным телефоном"""
+    return (
+        f"https://yoomoney.ru/quickpay/confirm.xml?"
+        f"receiver={YMONEY_WALLET}&"
+        f"quickpay-form=small&"
+        f"paymentType=SB&"  # SB — СБП
+        f"sum={amount}&"
+        f"label={label}&"
+        f"targets=Оплата%20виртуальной%20примерки&"
+        f"comment=Пополнение%20примерочной%20бота&"
+        f"phone-number=77055412755"  # Добавляем предустановленный номер телефона
+    )
 
     @staticmethod
     async def check_payment(label: str) -> bool:
@@ -1001,8 +1002,7 @@ async def process_sbp_payment(callback_query: types.CallbackQuery, amount: int):
     await callback_query.message.edit_text(
         f"📱 <b>Оплата {amount} руб. через СБП</b>\n\n"
         "1️⃣ Нажмите <b>«Перейти к оплате»</b>\n"
-        "2️⃣ Введите <b>номер телефона, привязанный к моей карте</b>\n"
-        "3️⃣ Подтвердите платеж в своем банке\n\n"
+        "2️⃣ Подтвердите платеж в своем банке\n\n"
         "⚠️ <i>Платеж поступит мне автоматически.</i>",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="➡️ Перейти к оплате", url=payment_link)],
