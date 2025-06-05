@@ -1340,18 +1340,19 @@ if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        
+
         # Запуск main() с обработкой завершения
         loop.run_until_complete(main())
-        
+
     except KeyboardInterrupt:
         logger.info("Bot stopped by keyboard interrupt")
-        
+
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
-        
+
     finally:
         # Всегда вызываем on_shutdown() перед выходом
         loop.run_until_complete(on_shutdown())
         loop.close()
-        logger.info("Bot successfully shut down")	
+        logger.info("Bot successfully shut down")
+	
