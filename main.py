@@ -219,7 +219,7 @@ class PaymentManager:
             f"https://yoomoney.ru/quickpay/confirm.xml?"
             f"receiver={YMONEY_WALLET}&"
             f"quickpay-form=small&"
-            f"paymentType=SB&"  # SB — СБП
+            f"paymentType=sbp&"  # SB — СБП
             f"sum={amount}&"
             f"label={label}&"
             f"targets=Оплата%20виртуальной%20примерки&"
