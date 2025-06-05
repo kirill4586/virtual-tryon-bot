@@ -87,10 +87,14 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     supabase = None
 
-def make_donation_link(user: types.User, amount: int) -> str:
+def make_donation_link(user: types.User, amount: int, fixed: bool = False) -> str:
+    """Генерирует ссылку для оплаты через DonationAlerts с фиксированной суммой"""
     username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
     message = username.replace(" ", "_")
-    return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
+    if fixed:
+        return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}&fixed_amount=true"
+    else:
+        return f"https://www.donationalerts.com/r/vasiliy4434?amount={amount}&message={message}"
 
 async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
     """Загружает файл в Supabase Storage"""
@@ -792,7 +796,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Меню выбора суммы оплаты через DonationAlerts"""
+    """Меню выбора суммы оплаты через DonationAlerts с фиксированными суммами"""
     user = callback_query.from_user
     await callback_query.message.edit_text(
         "Выберите сумму оплаты:",
@@ -800,24 +804,21 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
             [
                 InlineKeyboardButton(
                     text="💳 30 руб (1 примерка)", 
-                    url=make_donation_link(user, 30)
-                )
+                    url=make_donation_link(user, 30, fixed=True)
             ],
             [
                 InlineKeyboardButton(
                     text="💳 90 руб (3 примерки)", 
-                    url=make_donation_link(user, 90)
-                )
+                    url=make_donation_link(user, 90, fixed=True)
             ],
             [
                 InlineKeyboardButton(
                     text="💳 300 руб (10 примерок)", 
-                    url=make_donation_link(user, 300)
-                )
+                    url=make_donation_link(user, 300, fixed=True)
             ],
             [
                 InlineKeyboardButton(
-                    text="💳 Другая сумма", 
+                    text="💳 Другая сумма (от 30 руб)", 
                     url="https://www.donationalerts.com/r/vasiliy4434"
                 )
             ],
@@ -856,7 +857,7 @@ async def handle_pay_command(message: types.Message):
             await message.answer(f"❌ Минимальная сумма — {PRICE_PER_TRY} руб.")
             return
 
-        donation_link = make_donation_link(message.from_user, amount)
+        donation_link = make_donation_link(message.from_user, amount, fixed=True)
         
         await message.answer(
             f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
@@ -891,7 +892,7 @@ async def handle_balance(message: types.Message):
         "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        ])
+        )
     )
 
 @dp.callback_query(F.data == "back_to_balance")
@@ -902,7 +903,7 @@ async def back_to_balance(callback_query: types.CallbackQuery):
         "Выберите действие:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
-        ])
+        )
     )
     await callback_query.answer()
 
@@ -983,8 +984,8 @@ async def check_results():
                                     path=supabase_path,
                                     file=f,
                                     file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                              "image/png" if file_ext == '.png' else
-                                              "image/webp"}
+                                          "image/png" if file_ext == '.png' else
+                                          "image/webp"}
                                 )
                             logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
                         except Exception as upload_error:
