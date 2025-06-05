@@ -1044,13 +1044,47 @@ async def handle_standard_payment(callback_query: types.CallbackQuery):
 	
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Главное меню выбора способа оплаты (карта или СБП)"""
+    """Меню выбора суммы оплаты через DonationAlerts"""
+    user = callback_query.from_user
     await callback_query.message.edit_text(
-        "Выберите способ оплаты:",
+        "Выберите сумму оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="card_payment_menu")],
-            [InlineKeyboardButton(text="📱 Оплатить по СБП", callback_data="sbp_payment_menu")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_balance")]
+            [
+                InlineKeyboardButton(
+                    text="💳 30 руб (1 примерка)", 
+                    url=make_donation_link(user, 30)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 90 руб (3 примерки)", 
+                    url=make_donation_link(user, 90)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 300 руб (10 примерок)", 
+                    url=make_donation_link(user, 300)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Другая сумма", 
+                    url="https://www.donationalerts.com/r/vasiliy4434"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад", 
+                    callback_data="back_to_balance"
+                )
+            ]
         ])
     )
     await callback_query.answer()
