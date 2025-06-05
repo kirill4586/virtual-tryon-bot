@@ -155,13 +155,13 @@ async def handle_custom_amount(message: types.Message):
         donation_link = make_donation_link(message.from_user, amount)
         
         await message.answer(
-            f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
-            f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
-            "После оплаты нажмите кнопку ниже:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
-            ])
-        )
+    f"💳 Оплатите <b>{amount} руб.</b> через DonationAlerts\n\n"
+    f"👉 <a href='{donation_link}'>Ссылка для оплаты</a>\n\n"
+    "После оплаты нажмите кнопку ниже:",
+    reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Я оплатил", callback_data="confirm_donation")]
+    )
+)
     except ValueError:
         await message.answer("❌ Пожалуйста, введите только число (сумму в рублях)")
 
