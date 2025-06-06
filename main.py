@@ -1308,7 +1308,7 @@ async def main():
         
         # Запускаем фоновую задачу проверки результатов
         asyncio.create_task(check_results())
-		asyncio.create_task(check_donations_loop())
+        asyncio.create_task(check_donations_loop())
         
         # Бесконечный цикл (чтобы бот не завершался)
         while True:
