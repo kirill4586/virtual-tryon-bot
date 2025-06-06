@@ -1,4 +1,198 @@
+import os
+import logging
+import asyncio
+import aiohttp
+import shutil
+import sys
+import time
+import json
+import websockets
+from aiohttp import web
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+    InputMediaPhoto
+)
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from supabase import create_client, Client
+from dotenv import load_dotenv
 
+# Загрузка переменных окружения
+load_dotenv()
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация
+CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
+MIN_PAYMENT_AMOUNT = 1
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
+TABLE_ID = int(os.getenv("TABLE_ID"))
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+PRICE_PER_TRY = 1
+FREE_USERS = {6320348591, 973853935}
+UPLOAD_DIR = "uploads"
+MODELS_BUCKET = "models"
+EXAMPLES_BUCKET = "examples"
+UPLOADS_BUCKET = "uploads"
+SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
+EXAMPLES_PER_PAGE = 3
+MODELS_PER_PAGE = 3
+DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m")
+PORT = int(os.getenv("PORT", 4000))
+
+# Инициализация клиентов
+bot = Bot(
+    token=BOT_TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
+dp = Dispatcher(storage=MemoryStorage())
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Инициализация Supabase
+try:
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+    logger.info("Supabase client initialized successfully")
+    
+    buckets = supabase.storage.list_buckets()
+    logger.info(f"Available buckets: {buckets}")
+    
+    if MODELS_BUCKET not in [b.name for b in buckets]:
+        logger.error(f"Bucket '{MODELS_BUCKET}' not found in Supabase storage")
+    if EXAMPLES_BUCKET not in [b.name for b in buckets]:
+        logger.error(f"Bucket '{EXAMPLES_BUCKET}' not found in Supabase storage")
+    if UPLOADS_BUCKET not in [b.name for b in buckets]:
+        logger.error(f"Bucket '{UPLOADS_BUCKET}' not found in Supabase storage")
+except Exception as e:
+    logger.error(f"Failed to initialize Supabase client: {e}")
+    supabase = None
+
+class BaserowAPI:
+    def __init__(self):
+        self.base_url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}"
+        self.headers = {
+            "Authorization": f"Token {BASEROW_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+    async def upsert_row(self, user_id: int, username: str, data: dict):
+        try:
+            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Baserow GET error: {resp.status}")
+                        return None
+                    rows = await resp.json()
+                    
+                base_data = {
+                    "user_id": str(user_id),
+                    "username": username or ""
+                }
+                    
+                if rows.get("results"):
+                    row_id = rows["results"][0]["id"]
+                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
+                    async with session.patch(update_url, headers=self.headers, json={**base_data, **data}) as resp:
+                        return await resp.json()
+                else:
+                    async with session.post(f"{self.base_url}/?user_field_names=true", 
+                                         headers=self.headers, 
+                                         json={**base_data, **data}) as resp:
+                        return await resp.json()
+        except Exception as e:
+            logger.error(f"Baserow API exception: {e}")
+            return None
+
+    async def reset_flags(self, user_id: int):
+        try:
+            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Baserow GET error: {resp.status}")
+                        return False
+                    rows = await resp.json()
+                    
+                if rows.get("results"):
+                    row_id = rows["results"][0]["id"]
+                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
+                    reset_data = {
+                        "photo1_received": False,
+                        "photo2_received": False,
+                        "ready": False
+                    }
+                    async with session.patch(update_url, headers=self.headers, json=reset_data) as resp:
+                        return resp.status == 200
+        except Exception as e:
+            logger.error(f"Error resetting flags: {e}")
+            return False
+
+baserow = BaserowAPI()
+
+async def donation_socket_listener():
+    """WebSocket клиент для получения донатов в реальном времени"""
+    logger.info("🔌 Запуск WebSocket-клиента DonationAlerts")
+    uri = "wss://socket.donationalerts.ru:443/socket.io/?EIO=3&transport=websocket"
+    token = DONATION_ALERTS_TOKEN
+    last_donations = set()
+
+    while True:
+        try:
+            async with websockets.connect(uri) as ws:
+                await ws.send('40')  # Инициализация соединения
+                await asyncio.sleep(1)
+                await ws.send(f'42["add-user",{{"token":"{token}"}}]')
+
+                while True:
+                    msg = await ws.recv()
+
+                    if msg.startswith('42'):
+                        try:
+                            parsed = json.loads(msg[2:])
+                            event, data = parsed
+
+                            if event == 'donation':
+                                donation_id = data.get("id")
+                                if donation_id in last_donations:
+                                    continue
+
+                                last_donations.add(donation_id)
+                                amount = int(float(data.get("amount", 0)))
+                                message = data.get("message", "")
+                                status = data.get("status")
+
+                                if status != "success":
+                                    continue
+
+                                # Определение пользователя
+                                telegram_id = None
+                                telegram_username = None
+
+                                if message.startswith('@'):
+                                    telegram_username = message[1:].strip()
+                                elif "TelegramID_" in message:
+                                    try:
+                                        telegram_id = int(message.replace("TelegramID_", "").strip())
                                     except ValueError:
                                         continue
 
