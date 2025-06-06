@@ -989,14 +989,11 @@ async def main():
         app.router.add_post('/donation_callback', handle_donation_webhook)
         runner = web.AppRunner(app)
         await runner.setup()
-        site = web.TCPSite(runner, '0.0.0.0', 4000)
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
-        logger.info("Donation webhook server started at /donation_callback")
-        logger.info(f"Server started on port 4000")  # Добавьте отступ 
+        logger.info(f"Donation webhook server started on port {PORT}")
         
         await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        # Здесь можно добавить логику перезапуска с задержкой
-        await asyncio.sleep(5)
-        await main()
+        sys.exit(1)  # Завершаем работу при ошибке
