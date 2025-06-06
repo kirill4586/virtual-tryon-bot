@@ -1210,8 +1210,8 @@ async def check_donations_loop():
 
     while True:
         try:
-async with aiohttp.ClientSession() as session:
-async with session.get(
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
                     "https://www.donationalerts.com/api/v1/alerts/donations/",
                     headers=headers
                 ) as resp:
