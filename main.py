@@ -975,6 +975,13 @@ async def handle_donation_webhook(request):
     return web.Response(status=200)
 
 async def main():
+    # Delete any existing webhook first
+    try:
+        await bot.delete_webhook()
+        logger.info("Existing webhook deleted successfully")
+    except Exception as e:
+        logger.error(f"Error deleting webhook: {e}")
+
     # Start web server for donation alerts
     app = web.Application()
     app.router.add_post('/donation_callback', handle_donation_webhook)
@@ -986,6 +993,3 @@ async def main():
     
     # Start polling
     await dp.start_polling(bot)
-
-if __name__ == '__main__':
-    asyncio.run(main())
