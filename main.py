@@ -63,12 +63,9 @@ MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m"  # Токен вебхука DonationAlerts
 
 # Инициализация клиентов
-# Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-# Missing closing parenthesis here
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -743,61 +740,68 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
             return
             
-        # Get the highest resolution photo
-        photo = message.photo[-1]
+        # Проверяем, есть ли уже модель или первое фото
+        model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
+        first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
         
-        # Generate safe filename
-        file_ext = '.jpg'  # Default to jpg
-        for ext in SUPPORTED_EXTENSIONS:
-            if photo.file_unique_id.endswith(ext[1:]):
-                file_ext = ext
-                break
-                
-        file_name = f"photo_{photo_number}{file_ext}"
-        file_path = os.path.join(user_dir, file_name)
-        
-        # Ensure directory exists
-        os.makedirs(user_dir, exist_ok=True)
-        
-        # Download the photo
-        await bot.download(photo, destination=file_path)
-        
-        # Verify the file was saved
-        if not os.path.exists(file_path):
-            raise Exception("File not saved properly")
+        # Если это второе фото и нет модели, но есть первое фото
+        if photo_number == 2 and not model_selected and first_photo_exists:
+            photo = message.photo[-1]
+            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
+            file_name = f"photo_{photo_number}{file_ext}"
+            file_path = os.path.join(user_dir, file_name)
             
-        # Upload to Supabase
-        upload_success = await upload_to_supabase(file_path, user.id, "photos")
-        if not upload_success:
-            raise Exception("Supabase upload failed")
-        
-        # Update database
-        update_data = {
-            f"photo{'1' if photo_number == 1 else '2'}_received": True,
-            "status": "В обработке" if photo_number == 2 else "Ожидается фото человека/модели"
-        }
-        
-        if photo_number == 2:
-            # Decrement tries for non-free users
-            if user.id not in FREE_USERS:
-                tries_left = await get_user_tries(user.id)
-                if tries_left > 0:
-                    await update_user_tries(user.id, tries_left - 1)
-        
-        await baserow.upsert_row(user.id, user.username, update_data)
-        
-        response_text = (
-            "✅ Оба файла получены.\n\n🔄 Идёт примерка. Ожидайте результат!"
-            if photo_number == 2 else
-            "✅ Фото одежды получено.\n\nТеперь выберите модель из меню или отправьте фото человека."
-        )
-        
-        await message.answer(response_text)
-        if photo_number == 2:
+            await bot.download(photo, destination=file_path)
+            
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
+            
+            # Уменьшаем количество попыток
+            tries_left = await get_user_tries(user.id)
+            if tries_left > 0:
+                await update_user_tries(user.id, tries_left - 1)
+            
+            await baserow.upsert_row(user.id, user.username, {
+                "photo_person": True,
+                "status": "В обработке",
+                "photo1_received": True,
+                "photo2_received": True
+            })
+            
+            await message.answer(
+                "✅ Оба файла получены.\n\n"
+                "🔄 Идёт примерка. Ожидайте результат!"
+            )
             await notify_admin(f"📸 Новые фото от @{user.username} ({user.id})")
+            return
+            
+        # Если это первое фото
+        if photo_number == 1:
+            photo = message.photo[-1]
+            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
+            file_name = f"photo_{photo_number}{file_ext}"
+            file_path = os.path.join(user_dir, file_name)
+            
+            await bot.download(photo, destination=file_path)
+            
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
+            
+            await baserow.upsert_row(user.id, user.username, {
+                "photo_clothes": True,
+                "status": "Ожидается фото человека/модели",
+                "photo1_received": True,
+                "photo2_received": False
+            })
+            
+            response_text = (
+                "✅ Фото одежды получено.\n\n"
+                "Теперь выберите модель из меню или отправьте фото человека."
+            )
+            await message.answer(response_text)
             
     except Exception as e:
-        logger.error(f"Error processing photo: {str(e)}", exc_info=True)
+        logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
 @dp.callback_query(F.data == "payment_options")
@@ -855,134 +859,4 @@ async def handle_pay_command(message: types.Message):
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
-                    url=make_donation_link(message.from_user, 30, False)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил", 
-                    callback_data="confirm_donation"
-                )
-            ]
-        ])
-    )
-
-@dp.message(Command("pay_help"))
-async def pay_help(message: types.Message):
-    """Упрощенная справка по оплате"""
-    await message.answer(
-        "💡 Как оплатить:\n"
-        "1. Нажмите кнопку «Оплатить»\n"
-        "2. Оплатите услугу на открывшейся странице\n"
-        "3. Нажмите кнопку «Я оплатил» после завершения платежа\n\n"
-        "🔹 30 руб = 1 примерка\n"
-        "🔹 60 руб = 2 примерки\n"
-        "🔹 90 руб = 3 примерки\n\n"
-        "После оплаты доступ будет автоматически активирован в течение нескольких минут."
-    )
-
-async def handle_donation_webhook(request):
-    """Обработчик вебхука DonationAlerts"""
-    try:
-        # Проверяем токен авторизации
-        auth_token = request.headers.get('Authorization')
-        if auth_token != f"Bearer {DONATION_ALERTS_TOKEN}":
-            logger.warning(f"Invalid auth token: {auth_token}")
-            return web.Response(status=403)
-        
-        data = await request.json()
-        logger.info(f"Donation received: {data}")
-
-        # Проверяем, что это валидный платеж
-        if data.get('status') == 'success':
-            amount = int(float(data.get('amount', 0)))
-            user_message = data.get('message', '')
-            
-            # Извлекаем Telegram username или ID из сообщения
-            telegram_username = None
-            telegram_id = None
-            if user_message.startswith('@'):
-                telegram_username = user_message[1:]
-            elif 'TelegramID_' in user_message:
-                telegram_id = int(user_message.replace('TelegramID_', ''))
-            
-            # Рассчитываем количество примерок (1 примерка = 30 руб)
-            tries_added = amount // PRICE_PER_TRY
-            
-            if not telegram_username and not telegram_id:
-                logger.warning("No valid user identifier in donation message")
-                return web.Response(status=200)
-            
-            headers = {
-                "Authorization": f"Token {BASEROW_TOKEN}",
-                "Content-Type": "application/json"
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                # Находим пользователя
-                if telegram_username:
-                    url = f"{baserow.base_url}/?user_field_names=true&filter__username__equal={telegram_username}"
-                else:
-                    url = f"{baserow.base_url}/?user_field_names=true&filter__user_id__equal={telegram_id}"
-                
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Baserow GET error: {resp.status}")
-                        return web.Response(status=200)
-                    rows = await resp.json()
-                
-                if rows.get("results"):
-                    row = rows["results"][0]
-                    row_id = row["id"]
-                    current_tries = row.get("tries_left", 0)
-                    new_tries = current_tries + tries_added
-                    
-                    # Обновляем количество попыток
-                    update_url = f"{baserow.base_url}/{row_id}/?user_field_names=true"
-                    update_data = {
-                        "tries_left": new_tries,
-                        "last_payment_amount": amount,
-                        "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    
-                    async with session.patch(update_url, headers=headers, json=update_data) as resp:
-                        if resp.status == 200:
-                            logger.info(f"Updated tries for user {telegram_username or telegram_id} to {new_tries}")
-                            
-                            # Отправляем уведомление пользователю
-                            try:
-                                if telegram_id:
-                                    await bot.send_message(
-                                        telegram_id,
-                                        f"✅ Оплата получена! Вам добавлено {tries_added} примерок.\n"
-                                        f"Теперь у вас {new_tries} доступных примерок."
-                                    )
-                            except Exception as e:
-                                logger.error(f"Error sending notification: {e}")
-            
-            await notify_admin(f"💰 Получен платеж: {amount} руб от {telegram_username or telegram_id}. Добавлено {tries_added} примерок.")
-    
-    except Exception as e:
-        logger.error(f"Error processing donation: {e}")
-    
-    return web.Response(status=200)
-
-async def main():
-    # Delete any existing webhook first
-    try:
-        await bot.delete_webhook()
-        logger.info("Existing webhook deleted successfully")
-    except Exception as e:
-        logger.error(f"Error deleting webhook: {e}")
-
-    # Start web server for donation alerts
-    app = web.Application()
-    app.router.add_post('/donation_callback', handle_donation_webhook)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)
-    await site.start()
-    logger.info("Donation webhook server started at /donation_callback")
-    
-    # Start polling
-    await dp.start_polling(bot)
+                    url=make_donation_link(message.from_user, 30, False
