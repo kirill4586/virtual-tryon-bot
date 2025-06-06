@@ -5,6 +5,10 @@ import aiohttp
 import shutil
 import sys
 import time
+from aiohttp import web
+
+PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
+
 if sys.platform == "linux":
     import fcntl
     try:
@@ -12,6 +16,7 @@ if sys.platform == "linux":
     except IOError:
         logger.error("Another instance is already running. Exiting.")
         sys.exit(1)
+
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -26,7 +31,6 @@ from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
 from supabase import create_client, Client
 from dotenv import load_dotenv
-from aiohttp import web
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -51,23 +55,22 @@ TABLE_ID = int(os.getenv("TABLE_ID"))
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-YMONEY_TOKEN = os.getenv("YMONEY_TOKEN")
-YMONEY_WALLET = os.getenv("YMONEY_WALLET")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
 FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
-EXAMPLES_BUCKET = "primery"
-UPLOADS_BUCKET = "uploads"  # Бакет для загружаемых файлов
-SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
-MODELS_PER_PAGE = 3
+EXAMPLES_BUCKET = "examples"
+UPLOADS_BUCKET = "uploads"
+SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 EXAMPLES_PER_PAGE = 3
-PORT = int(os.getenv("PORT", 8000))  # Порт для веб-сервера
+MODELS_PER_PAGE = 3
+DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m")
 
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -88,46 +91,6 @@ try:
 except Exception as e:
     logger.error(f"Failed to initialize Supabase client: {e}")
     supabase = None
-
-async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
-    """Загружает файл в Supabase Storage"""
-    if not supabase:
-        return False
-    
-    try:
-        file_name = os.path.basename(file_path)
-        destination_path = f"{user_id}/{file_type}/{file_name}"
-        
-        with open(file_path, 'rb') as f:
-            res = supabase.storage.from_(UPLOADS_BUCKET).upload(
-                path=destination_path,
-                file=f,
-                file_options={"content-type": "image/jpeg"}
-            )
-        
-        logger.info(f"File {file_path} uploaded to Supabase as {destination_path}")
-        return True
-    except Exception as e:
-        logger.error(f"Error uploading file to Supabase: {e}")
-        return False
-
-async def download_from_supabase(user_id: int, file_type: str, file_name: str, local_path: str):
-    """Скачивает файл из Supabase Storage"""
-    if not supabase:
-        return False
-    
-    try:
-        source_path = f"{user_id}/{file_type}/{file_name}"
-        res = supabase.storage.from_(UPLOADS_BUCKET).download(source_path)
-        
-        with open(local_path, 'wb') as f:
-            f.write(res)
-        
-        logger.info(f"File {source_path} downloaded from Supabase to {local_path}")
-        return True
-    except Exception as e:
-        logger.error(f"Error downloading file from Supabase: {e}")
-        return False
 
 class BaserowAPI:
     def __init__(self):
@@ -195,59 +158,53 @@ class BaserowAPI:
 
 baserow = BaserowAPI()
 
-class PaymentManager:
-    @staticmethod
-    async def create_payment_link(amount: float, label: str) -> str:
-        """Создает ссылку для оплаты через ЮMoney"""
-        return (
-            f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver={YMONEY_WALLET}&"
-            f"quickpay-form=small&"
-            f"paymentType=AC,PC&"  # AC — карта, PC — ЮMoney (оба варианта)
-            f"sum={amount}&"
-            f"label={label}&"
-            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
-            f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
-        )
+def make_donation_link(user: types.User, amount: int = 30, fixed: bool = True) -> str:
+    """Генерирует ссылку для оплаты через DonationAlerts"""
+    username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
+    message = username.replace(" ", "_")
+    if fixed:
+        return f"https://www.donationalerts.com/r/primerochnay777?amount={amount}&message={message}&fixed_amount=true"
+    else:
+        return f"https://www.donationalerts.com/r/primerochnay777?amount={amount}&message={message}"
 
-    @staticmethod
-    async def create_sbp_link(amount: float, label: str) -> str:
-        """Создает ссылку для оплаты через СБП"""
-        return (
-            f"https://yoomoney.ru/quickpay/confirm.xml?"
-            f"receiver={YMONEY_WALLET}&"
-            f"quickpay-form=small&"
-            f"paymentType=SB&"  # SB — СБП
-            f"sum={amount}&"
-            f"label={label}&"
-            f"targets=Оплата%20виртуальной%20примерки&"  # URL-encoded
-            f"comment=Пополнение%20примерочной%20бота"   # URL-encoded
-        )
-
-    @staticmethod
-    async def check_payment(label: str) -> bool:
-        """Проверяет наличие платежа по метке"""
-        url = "https://yoomoney.ru/api/operation-history"
-        headers = {
-            "Authorization": f"Bearer {YMONEY_TOKEN}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        data = {
-            "type": "deposition",
-            "label": label,
-            "records": "1"
-        }
+async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
+    """Загружает файл в Supabase Storage"""
+    if not supabase:
+        return False
+    
+    try:
+        file_name = os.path.basename(file_path)
+        destination_path = f"{user_id}/{file_type}/{file_name}"
         
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, data=data) as resp:
-                    if resp.status == 200:
-                        result = await resp.json()
-                        return result.get("operations", []) != []
-                    else:
-                        logger.error(f"YooMoney API error: {resp.status} - {await resp.text()}")
-        except Exception as e:
-            logger.error(f"Error checking payment: {e}")
+        with open(file_path, 'rb') as f:
+            res = supabase.storage.from_(UPLOADS_BUCKET).upload(
+                path=destination_path,
+                file=f,
+                file_options={"content-type": "image/jpeg"}
+            )
+        
+        logger.info(f"File {file_path} uploaded to Supabase as {destination_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error uploading file to Supabase: {e}")
+        return False
+
+async def download_from_supabase(user_id: int, file_type: str, file_name: str, local_path: str):
+    """Скачивает файл из Supabase Storage"""
+    if not supabase:
+        return False
+    
+    try:
+        source_path = f"{user_id}/{file_type}/{file_name}"
+        res = supabase.storage.from_(UPLOADS_BUCKET).download(source_path)
+        
+        with open(local_path, 'wb') as f:
+            f.write(res)
+        
+        logger.info(f"File {source_path} downloaded from Supabase to {local_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Error downloading file from Supabase: {e}")
         return False
 
 async def get_user_tries(user_id: int) -> int:
@@ -743,17 +700,39 @@ async def handle_photo(message: types.Message):
         if tries_left <= 0:
             await message.answer(
                 "🚫 У вас закончились бесплатные примерки.\n\n"
+                "Для продолжения работы оплатите услугу:\n"
                 "💵 Стоимость одной примерки: 30 руб.\n"
                 "После оплаты вам будет доступно количество примерок в соответствии с внесенной суммой.\n\n"
                 "Например:\n"
                 "30 руб = 1 примерка\n"
                 "60 руб = 2 примерки\n"
                 "90 руб = 3 примерки и т.д.",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(text="💳 Оплатить картой", callback_data="payment_options")]
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [
+                        InlineKeyboardButton(
+                            text="💳 Оплатить 30 руб (1 примерка)", 
+                            url=make_donation_link(user, 30)
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💳 Оплатить 60 руб (2 примерки)", 
+                            url=make_donation_link(user, 60)
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💳 Оплатить произвольную сумму", 
+                            url=make_donation_link(user, 30, False)
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="✅ Я оплатил", 
+                            callback_data="confirm_donation"
+                        )
                     ]
-                )
+                ])
             )
             return
             
@@ -842,272 +821,186 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-@dp.callback_query(F.data.startswith("check_payment_"))
-async def check_payment(callback_query: types.CallbackQuery):
-    try:
-        payment_label = callback_query.data.replace("check_payment_", "")
-        is_paid = await PaymentManager.check_payment(payment_label)
-        
-        if is_paid:
-            user_id = callback_query.from_user.id
-            amount = int(payment_label.split("_")[-1])  # Получаем сумму из метки
-            tries_to_add = amount // PRICE_PER_TRY
-            
-            # Получаем текущее количество попыток
-            current_tries = await get_user_tries(user_id)
-            new_tries = current_tries + tries_to_add
-            
-            # Обновляем количество попыток в Baserow
-            await update_user_tries(user_id, new_tries)
-            
-            # Отправляем сообщение об успешной оплате
-            await callback_query.message.edit_text(
-                f"✅ Оплата подтверждена! Вам добавлено {tries_to_add} примерок.\n"
-                f"Теперь у вас {new_tries} доступных примерок.",
-                reply_markup=None
-            )
-            
-            # Уведомляем администратора
-            await notify_admin(
-                f"💰 Подтверждена оплата от @{callback_query.from_user.username} ({user_id})\n"
-                f"Сумма: {amount} руб.\n"
-                f"Добавлено примерок: {tries_to_add}"
-            )
-        else:
-            # Если оплата не подтверждена, предлагаем проверить снова
-            await callback_query.answer(
-                "Платеж еще не поступил. Попробуйте проверить позже.",
-                show_alert=True
-            )
-    except Exception as e:
-        logger.error(f"Error in check_payment: {e}")
-        await callback_query.answer(
-            "Произошла ошибка при проверке платежа. Попробуйте позже.",
-            show_alert=True
-        )
-
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Показывает варианты оплаты"""
+    """Упрощенное меню оплаты с одной кнопкой"""
     user = callback_query.from_user
-    payment_label = f"user_{user.id}_{int(time.time())}"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить 30 руб (1 примерка)", 
-                url=await PaymentManager.create_payment_link(30, payment_label + "_30")
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить 60 руб (2 примерки)", 
-                url=await PaymentManager.create_payment_link(60, payment_label + "_60")
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить 90 руб (3 примерки)", 
-                url=await PaymentManager.create_payment_link(90, payment_label + "_90")
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить произвольную сумму", 
-                callback_data="custom_payment"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="✅ Я оплатил (проверить)", 
-                callback_data=f"check_payment_{payment_label}"
-            )
-        ]
-    ])
-    
     await callback_query.message.edit_text(
-        "Выберите способ оплаты:",
-        reply_markup=keyboard
+        "Для продолжения работы с ботом необходимо оплатить услугу:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 30 руб (1 примерка)", 
+                    url=make_donation_link(user, 30)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 60 руб (2 примерки)", 
+                    url=make_donation_link(user, 60)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить произвольную сумму", 
+                    url=make_donation_link(user, 30, False)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
+                )
+            ]
+        ])
     )
     await callback_query.answer()
 
-@dp.callback_query(F.data == "custom_payment")
-async def custom_payment(callback_query: types.CallbackQuery):
-    """Обработчик произвольной суммы оплаты"""
+@dp.callback_query(F.data == "confirm_donation")
+async def confirm_donation(callback_query: types.CallbackQuery):
     user = callback_query.from_user
-    payment_label = f"user_{user.id}_{int(time.time())}"
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить картой (любая сумма)", 
-                callback_data="custom_card_payment"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="💳 Оплатить СБП (любая сумма)", 
-                callback_data="custom_sbp_payment"
-            )
-        ],
-        [
-            InlineKeyboardButton(
-                text="⬅️ Назад к вариантам оплаты", 
-                callback_data="payment_options"
-            )
-        ]
-    ])
-    
-    await callback_query.message.edit_text(
-        "Выберите способ оплаты произвольной суммы:",
-        reply_markup=keyboard
+    await callback_query.message.answer(
+        "✅ Спасибо! Мы проверим ваш платёж и активируем доступ в течение нескольких минут.\n\n"
+        "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти. "
+        "При необходимости — напишите нам в поддержку."
     )
+    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
     await callback_query.answer()
 
-@dp.callback_query(F.data == "custom_card_payment")
-async def handle_custom_card_payment(callback_query: types.CallbackQuery):
-    """Обработчик оплаты произвольной суммы картой"""
-    user = callback_query.from_user
-    payment_label = f"user_{user.id}_{int(time.time())}"
-    
-    await callback_query.message.edit_text(
-        "Введите сумму в рублях (минимум 30 руб):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад", 
-                    callback_data="custom_payment"
-                )
-            ]
-        ])
-    )
-    
-    # Устанавливаем состояние ожидания ввода суммы
-    await dp.current_state(user=user.id).set_state("waiting_for_custom_amount_card")
-
-@dp.message(F.text.regexp(r'^\d+$').as_("amount"), state="waiting_for_custom_amount_card")
-async def process_custom_card_amount(message: types.Message, state: FSMContext, amount: str):
-    """Обработка введенной суммы для оплаты картой"""
-    user = message.from_user
-    amount_int = int(amount)
-    
-    if amount_int < MIN_PAYMENT_AMOUNT:
-        await message.answer(
-            f"Минимальная сумма оплаты {MIN_PAYMENT_AMOUNT} руб.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад", 
-                        callback_data="custom_payment"
-                    )
-                ]
-            ])
-        )
-        return
-    
-    payment_label = f"user_{user.id}_{int(time.time())}_{amount_int}"
-    payment_url = await PaymentManager.create_payment_link(amount_int, payment_label)
-    
+@dp.message(Command("pay"))
+async def handle_pay_command(message: types.Message):
+    """Обработчик команды /pay - сразу перенаправляет на страницу оплаты"""
     await message.answer(
-        f"Сумма к оплате: {amount_int} руб.\n"
-        f"Будет добавлено {amount_int // PRICE_PER_TRY} примерок.",
+        "Переход на страницу оплаты:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить", 
-                    url=payment_url
+                    text="💳 Оплатить 30 руб (1 примерка)", 
+                    url=make_donation_link(message.from_user, 30)
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="✅ Я оплатил (проверить)", 
-                    callback_data=f"check_payment_{payment_label}"
+                    text="💳 Оплатить 60 руб (2 примерки)", 
+                    url=make_donation_link(message.from_user, 60)
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="⬅️ Назад", 
-                    callback_data="custom_payment"
+                    text="💳 Оплатить произвольную сумму", 
+                    url=make_donation_link(message.from_user, 30, False)
                 )
-            ]
-        ])
-    )
-    
-    await state.finish()
-
-@dp.callback_query(F.data == "custom_sbp_payment")
-async def handle_custom_sbp_payment(callback_query: types.CallbackQuery):
-    """Обработчик оплаты произвольной суммы через СБП"""
-    user = callback_query.from_user
-    payment_label = f"user_{user.id}_{int(time.time())}"
-    
-    await callback_query.message.edit_text(
-        "Введите сумму в рублях (минимум 30 руб):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            ],
             [
                 InlineKeyboardButton(
-                    text="⬅️ Назад", 
-                    callback_data="custom_payment"
+                    text="✅ Я оплатил", 
+                    callback_data="confirm_donation"
                 )
             ]
         ])
     )
-    
-    # Устанавливаем состояние ожидания ввода суммы
-    await dp.current_state(user=user.id).set_state("waiting_for_custom_amount_sbp")
 
-@dp.message(F.text.regexp(r'^\d+$').as_("amount"), state="waiting_for_custom_amount_sbp")
-async def process_custom_sbp_amount(message: types.Message, state: FSMContext, amount: str):
-    """Обработка введенной суммы для оплаты через СБП"""
-    user = message.from_user
-    amount_int = int(amount)
-    
-    if amount_int < MIN_PAYMENT_AMOUNT:
-        await message.answer(
-            f"Минимальная сумма оплаты {MIN_PAYMENT_AMOUNT} руб.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="⬅️ Назад", 
-                        callback_data="custom_payment"
-                    )
-                ]
-            ])
-        )
-        return
-    
-    payment_label = f"user_{user.id}_{int(time.time())}_{amount_int}"
-    payment_url = await PaymentManager.create_sbp_link(amount_int, payment_label)
-    
+@dp.message(Command("pay_help"))
+async def pay_help(message: types.Message):
+    """Упрощенная справка по оплате"""
     await message.answer(
-        f"Сумма к оплате: {amount_int} руб.\n"
-        f"Будет добавлено {amount_int // PRICE_PER_TRY} примерок.",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить через СБП", 
-                    url=payment_url
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил (проверить)", 
-                    callback_data=f"check_payment_{payment_label}"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Назад", 
-                    callback_data="custom_payment"
-                )
-            ]
-        ])
+        "💡 Как оплатить:\n"
+        "1. Нажмите кнопку «Оплатить»\n"
+        "2. Оплатите услугу на открывшейся странице\n"
+        "3. Нажмите кнопку «Я оплатил» после завершения платежа\n\n"
+        "🔹 30 руб = 1 примерка\n"
+        "🔹 60 руб = 2 примерки\n"
+        "🔹 90 руб = 3 примерки\n\n"
+        "После оплаты доступ будет автоматически активирован в течение нескольких минут."
     )
+
+async def handle_donation_webhook(request):
+    """Обработчик вебхука DonationAlerts"""
+    try:
+        # Проверяем токен авторизации
+        auth_token = request.headers.get('Authorization')
+        if auth_token != f"Bearer {DONATION_ALERTS_TOKEN}":
+            logger.warning(f"Invalid auth token: {auth_token}")
+            return web.Response(status=403)
+        
+        data = await request.json()
+        logger.info(f"Donation received: {data}")
+
+        # Проверяем, что это валидный платеж
+        if data.get('status') == 'success':
+            amount = int(float(data.get('amount', 0)))
+            user_message = data.get('message', '')
+            
+            # Извлекаем Telegram username или ID из сообщения
+            telegram_username = None
+            telegram_id = None
+            if user_message.startswith('@'):
+                telegram_username = user_message[1:]
+            elif 'TelegramID_' in user_message:
+                telegram_id = int(user_message.replace('TelegramID_', ''))
+            
+            # Рассчитываем количество примерок (1 примерка = 30 руб)
+            tries_added = amount // PRICE_PER_TRY
+            
+            if not telegram_username and not telegram_id:
+                logger.warning("No valid user identifier in donation message")
+                return web.Response(status=200)
+            
+            headers = {
+                "Authorization": f"Token {BASEROW_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                # Находим пользователя
+                if telegram_username:
+                    url = f"{baserow.base_url}/?user_field_names=true&filter__username__equal={telegram_username}"
+                else:
+                    url = f"{baserow.base_url}/?user_field_names=true&filter__user_id__equal={telegram_id}"
+                
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Baserow GET error: {resp.status}")
+                        return web.Response(status=200)
+                    rows = await resp.json()
+                
+                if rows.get("results"):
+                    row = rows["results"][0]
+                    row_id = row["id"]
+                    current_tries = row.get("tries_left", 0)
+                    new_tries = current_tries + tries_added
+                    
+                    # Обновляем количество попыток
+                    update_url = f"{baserow.base_url}/{row_id}/?user_field_names=true"
+                    update_data = {
+                        "tries_left": new_tries,
+                        "last_payment_amount": amount,
+                        "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    
+                    async with session.patch(update_url, headers=headers, json=update_data) as resp:
+                        if resp.status == 200:
+                            logger.info(f"Updated tries for user {telegram_username or telegram_id} to {new_tries}")
+                            
+                            # Отправляем уведомление пользователю
+                            try:
+                                if telegram_id:
+                                    await bot.send_message(
+                                        telegram_id,
+                                        f"✅ Оплата получена! Вам добавлено {tries_added} примерок.\n"
+                                        f"Теперь у вас {new_tries} доступных примерок."
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error sending notification: {e}")
+            
+            await notify_admin(f"💰 Получен платеж: {amount} руб от {telegram_username or telegram_id}. Добавлено {tries_added} примерок.")
     
-    await state.finish()
+    except Exception as e:
+        logger.error(f"Error processing donation: {e}")
+    
+    return web.Response(status=200)
 
 async def check_results():
-    """Фоновая задача для проверки результатов обработки"""
     logger.info("🔄 Starting check_results() loop...")
     while True:
         try:
@@ -1125,13 +1018,13 @@ async def check_results():
 
                 logger.info(f"📁 Checking user dir: {user_dir}")
 
-                # Ищем локально result-файлы
+                # 1. Ищем локально result-файлы с любым поддерживаемым расширением
                 result_files = [
                     f for f in os.listdir(user_dir)
                     if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
                 ]
 
-                # Если не найдено локально — пробуем скачать из Supabase
+                # 2. Если не найдено локально — пробуем скачать из Supabase
                 if not result_files:
                     for ext in SUPPORTED_EXTENSIONS:
                         try:
@@ -1145,12 +1038,12 @@ async def check_results():
 
                             logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
                             result_files = [f"result{ext}"]
-                            break
+                            break  # Прерываем цикл после успешной загрузки
                         except Exception as e:
                             logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
                             continue
 
-                # Если файлы найдены, обрабатываем первый подходящий
+                # 3. Если файлы найдены, обрабатываем первый подходящий
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
 
@@ -1174,7 +1067,7 @@ async def check_results():
                             caption="🎉 Ваша виртуальная примерка готова!"
                         )
 
-                        # Загружаем результат в Supabase с уникальным именем
+                        # Загружаем результат в Supabase с новым уникальным именем
                         try:
                             file_ext = os.path.splitext(result_file)[1].lower()
                             supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
@@ -1268,61 +1161,93 @@ async def check_results():
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-async def handle_webhook(request):
-    """Обработчик веб-запросов для проверки работы бота"""
+async def handle(request):
     return web.Response(text="Bot is running")
 
 async def health_check(request):
-    """Обработчик health check для мониторинга"""
     return web.Response(text="OK", status=200)
 
-async def on_startup(dp):
-    """Действия при запуске бота"""
-    logger.info("Starting bot...")
-    asyncio.create_task(check_results())
+def setup_web_server():
+    app = web.Application()
+    
+    app.router.add_get('/', handle)
+    app.router.add_get('/health', health_check)
+    app.router.add_post('/donation_callback', handle_donation_webhook)
+    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
+    return app
 
-async def on_shutdown(dp):
-    """Действия при завершении работы бота"""
+async def webhook_handler(request):
+    try:
+        # Получаем обновление от Telegram
+        update = await request.json()
+        await dp.feed_webhook_update(bot, update)
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500, text="Internal Server Error")
+    
+async def start_web_server():
+    app = setup_web_server()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
+    
+async def on_shutdown():
     logger.info("Shutting down...")
-    await bot.delete_webhook()
+    await bot.delete_webhook()  # Удаляем вебхук при завершении
     logger.info("Webhook removed")
 
 async def main():
-    """Основная функция запуска бота"""
     try:
-        # Настройка веб-сервера
-        app = web.Application()
-        app.router.add_get('/', handle_webhook)
-        app.router.add_get('/health', health_check)
-        
-        # Настройка бота
-        dp.startup.register(on_startup)
-        dp.shutdown.register(on_shutdown)
+        logger.info("Starting bot...")
         
         # Запуск веб-сервера
+        app = setup_web_server()
         runner = web.AppRunner(app)
         await runner.setup()
+        
+        # Устанавливаем вебхук
+        webhook_url = f"https://your-service.onrender.com/{BOT_TOKEN.split(':')[1]}"
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+        )
+        logger.info(f"Webhook set to: {webhook_url}")
+        
+        # Запускаем веб-сервер
         site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
         logger.info(f"Web server started on port {PORT}")
         
-        # Запуск бота в режиме polling
-        await dp.start_polling(bot)
+        # Запускаем фоновую задачу проверки результатов
+        asyncio.create_task(check_results())
         
+        # Бесконечный цикл (чтобы бот не завершался)
+        while True:
+            await asyncio.sleep(3600)  # Просто ждём, пока сервер работает
+            
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
-        sys.exit(1)
+        logger.error(f"Error in main: {e}")
+        raise
 
 if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+
+        # Запуск main() с обработкой завершения
         loop.run_until_complete(main())
+
     except KeyboardInterrupt:
         logger.info("Bot stopped by keyboard interrupt")
+
     except Exception as e:
         logger.critical(f"Fatal error: {e}")
+
     finally:
-        loop.run_until_complete(on_shutdown(None))
+        # Всегда вызываем on_shutdown() перед выходом
+        loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
