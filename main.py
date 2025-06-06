@@ -60,11 +60,14 @@ UPLOADS_BUCKET = "uploads"
 SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
+DONATION_ALERTS_TOKEN = "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m"  # Токен вебхука DonationAlerts
 
+# Инициализация клиентов
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+# Missing closing parenthesis here
 )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -740,68 +743,61 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
             return
             
-        # Проверяем, есть ли уже модель или первое фото
-        model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
-        first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
+        # Get the highest resolution photo
+        photo = message.photo[-1]
         
-        # Если это второе фото и нет модели, но есть первое фото
-        if photo_number == 2 and not model_selected and first_photo_exists:
-            photo = message.photo[-1]
-            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
-            file_name = f"photo_{photo_number}{file_ext}"
-            file_path = os.path.join(user_dir, file_name)
+        # Generate safe filename
+        file_ext = '.jpg'  # Default to jpg
+        for ext in SUPPORTED_EXTENSIONS:
+            if photo.file_unique_id.endswith(ext[1:]):
+                file_ext = ext
+                break
+                
+        file_name = f"photo_{photo_number}{file_ext}"
+        file_path = os.path.join(user_dir, file_name)
+        
+        # Ensure directory exists
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Download the photo
+        await bot.download(photo, destination=file_path)
+        
+        # Verify the file was saved
+        if not os.path.exists(file_path):
+            raise Exception("File not saved properly")
             
-            await bot.download(photo, destination=file_path)
-            
-            # Загружаем фото в Supabase
-            await upload_to_supabase(file_path, user.id, "photos")
-            
-            # Уменьшаем количество попыток
-            tries_left = await get_user_tries(user.id)
-            if tries_left > 0:
-                await update_user_tries(user.id, tries_left - 1)
-            
-            await baserow.upsert_row(user.id, user.username, {
-                "photo_person": True,
-                "status": "В обработке",
-                "photo1_received": True,
-                "photo2_received": True
-            })
-            
-            await message.answer(
-                "✅ Оба файла получены.\n\n"
-                "🔄 Идёт примерка. Ожидайте результат!"
-            )
+        # Upload to Supabase
+        upload_success = await upload_to_supabase(file_path, user.id, "photos")
+        if not upload_success:
+            raise Exception("Supabase upload failed")
+        
+        # Update database
+        update_data = {
+            f"photo{'1' if photo_number == 1 else '2'}_received": True,
+            "status": "В обработке" if photo_number == 2 else "Ожидается фото человека/модели"
+        }
+        
+        if photo_number == 2:
+            # Decrement tries for non-free users
+            if user.id not in FREE_USERS:
+                tries_left = await get_user_tries(user.id)
+                if tries_left > 0:
+                    await update_user_tries(user.id, tries_left - 1)
+        
+        await baserow.upsert_row(user.id, user.username, update_data)
+        
+        response_text = (
+            "✅ Оба файла получены.\n\n🔄 Идёт примерка. Ожидайте результат!"
+            if photo_number == 2 else
+            "✅ Фото одежды получено.\n\nТеперь выберите модель из меню или отправьте фото человека."
+        )
+        
+        await message.answer(response_text)
+        if photo_number == 2:
             await notify_admin(f"📸 Новые фото от @{user.username} ({user.id})")
-            return
-            
-        # Если это первое фото
-        if photo_number == 1:
-            photo = message.photo[-1]
-            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
-            file_name = f"photo_{photo_number}{file_ext}"
-            file_path = os.path.join(user_dir, file_name)
-            
-            await bot.download(photo, destination=file_path)
-            
-            # Загружаем фото в Supabase
-            await upload_to_supabase(file_path, user.id, "photos")
-            
-            await baserow.upsert_row(user.id, user.username, {
-                "photo_clothes": True,
-                "status": "Ожидается фото человека/модели",
-                "photo1_received": True,
-                "photo2_received": False
-            })
-            
-            response_text = (
-                "✅ Фото одежды получено.\n\n"
-                "Теперь выберите модель из меню или отправьте фото человека."
-            )
-            await message.answer(response_text)
             
     except Exception as e:
-        logger.error(f"Error processing photo: {e}")
+        logger.error(f"Error processing photo: {str(e)}", exc_info=True)
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
 @dp.callback_query(F.data == "payment_options")
@@ -846,8 +842,20 @@ async def handle_pay_command(message: types.Message):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить", 
-                    url="https://www.donationalerts.com/r/primerochnay777"
+                    text="💳 Оплатить 30 руб (1 примерка)", 
+                    url=make_donation_link(message.from_user, 30)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 60 руб (2 примерки)", 
+                    url=make_donation_link(message.from_user, 60)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить произвольную сумму", 
+                    url=make_donation_link(message.from_user, 30, False)
                 )
             ],
             [
@@ -866,305 +874,115 @@ async def pay_help(message: types.Message):
         "💡 Как оплатить:\n"
         "1. Нажмите кнопку «Оплатить»\n"
         "2. Оплатите услугу на открывшейся странице\n"
-        "3. Нажмите «Я оплатил» после завершения платежа\n\n"
-        "💰 Стоимость одной примерки: 30 руб.\n"
-        "Вы можете оплатить любое количество примерок.\n\n"
-            )
-            
-@dp.message(Command("balance"))
-async def handle_balance(message: types.Message):
-    tries_left = await get_user_tries(message.from_user.id)
-    await message.answer(
-        f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Для продолжения работы с ботом необходимо оплатить услугу:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить", 
-                    url="https://www.donationalerts.com/r/primerochnay777"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил", 
-                    callback_data="confirm_donation"
-                )
-            ]
-        ])
+        "3. Нажмите кнопку «Я оплатил» после завершения платежа\n\n"
+        "🔹 30 руб = 1 примерка\n"
+        "🔹 60 руб = 2 примерки\n"
+        "🔹 90 руб = 3 примерки\n\n"
+        "После оплаты доступ будет автоматически активирован в течение нескольких минут."
     )
 
-@dp.callback_query(F.data == "back_to_balance")
-async def back_to_balance(callback_query: types.CallbackQuery):
-    tries_left = await get_user_tries(callback_query.from_user.id)
-    await callback_query.message.edit_text(
-        f"🔄 У вас осталось {tries_left} примерок\n\n"
-        "Для продолжения работы с ботом необходимо оплатить услугу:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить", 
-                    url="https://www.donationalerts.com/r/primerochnay777"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил", 
-                    callback_data="confirm_donation"
-                )
-            ]
-        ])
-    )
-    await callback_query.answer()
-
-async def check_results():
-    logger.info("🔄 Starting check_results() loop...")
-    while True:
-        try:
-            logger.info("🔍 Scanning for results...")
-
-            if not os.path.exists(UPLOAD_DIR):
-                logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
-                await asyncio.sleep(10)
-                continue
-
-            for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
-                if not os.path.isdir(user_dir):
-                    continue
-
-                logger.info(f"📁 Checking user dir: {user_dir}")
-
-                # 1. Ищем локально result-файлы с любым поддерживаемым расширением
-                result_files = [
-                    f for f in os.listdir(user_dir)
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-                ]
-
-                # 2. Если не найдено локально — пробуем скачать из Supabase
-                if not result_files:
-                    for ext in SUPPORTED_EXTENSIONS:
-                        try:
-                            result_supabase_path = f"{user_id_str}/result{ext}"
-                            result_file_local = os.path.join(user_dir, f"result{ext}")
-                            os.makedirs(user_dir, exist_ok=True)
-
-                            res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-                            with open(result_file_local, 'wb') as f:
-                                f.write(res)
-
-                            logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
-                            result_files = [f"result{ext}"]
-                            break  # Прерываем цикл после успешной загрузки
-                        except Exception as e:
-                            logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
-                            continue
-
-                # 3. Если файлы найдены, обрабатываем первый подходящий
-                if result_files:
-                    result_file = os.path.join(user_dir, result_files[0])
-
-                    try:
-                        user_id = int(user_id_str)
-
-                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
-                            continue
-
-                        if os.path.getsize(result_file) == 0:
-                            logger.warning(f"🚫 Файл {result_file} пуст")
-                            continue
-
-                        logger.info(f"📤 Отправляем результат для {user_id}")
-
-                        photo = FSInputFile(result_file)
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!"
-                        )
-
-                        # Загружаем результат в Supabase с новым уникальным именем
-                        try:
-                            file_ext = os.path.splitext(result_file)[1].lower()
-                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-
-                            with open(result_file, 'rb') as f:
-                                supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                    path=supabase_path,
-                                    file=f,
-                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                          "image/png" if file_ext == '.png' else
-                                          "image/webp"}
-                                )
-                            logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
-                        except Exception as upload_error:
-                            logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
-
-                        # Обновляем Baserow
-                        try:
-                            await baserow.upsert_row(user_id, "", {
-                                "status": "Результат отправлен",
-                                "result_sent": True,
-                                "ready": True,
-                                "result_url": supabase_path if 'supabase_path' in locals() else None
-                            })
-                        except Exception as db_error:
-                            logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
-
-                        # Удаляем локальную папку
-                        try:
-                            shutil.rmtree(user_dir)
-                            logger.info(f"🗑️ Папка {user_dir} удалена")
-                        except Exception as cleanup_error:
-                            logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
-
-                        # Удаляем файлы пользователя из Supabase
-                        try:
-                            base = supabase.storage.from_(UPLOADS_BUCKET)
-                            files_to_delete = []
-
-                            # Добавляем все возможные фото пользователя
-                            for ext in SUPPORTED_EXTENSIONS:
-                                files_to_delete.extend([
-                                    f"{user_id_str}/photos/photo_1{ext}",
-                                    f"{user_id_str}/photos/photo_2{ext}"
-                                ])
-
-                            # Добавляем result-файлы из папки results
-                            try:
-                                result_files_in_supabase = base.list(f"{user_id_str}/results")
-                                for f in result_files_in_supabase:
-                                    if f['name'].startswith("result"):
-                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов из results/: {e}")
-
-                            # Добавляем result-файлы из корня uploads/{user_id}/
-                            try:
-                                root_files = base.list(user_id_str)
-                                for f in root_files:
-                                    if f['name'].startswith("result") and any(f['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS):
-                                        files_to_delete.append(f"{user_id_str}/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов из корня: {e}")
-
-                            # Удаляем только существующие
-                            existing_files = []
-                            for file_path in files_to_delete:
-                                try:
-                                    base.download(file_path)
-                                    existing_files.append(file_path)
-                                except Exception:
-                                    continue
-
-                            if existing_files:
-                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
-                                base.remove(existing_files)
-                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
-                            else:
-                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
-
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                        continue
-
-            await asyncio.sleep(30)
-
-        except Exception as e:
-            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
-            await asyncio.sleep(30)
-
-async def handle(request):
-    return web.Response(text="Bot is running")
-
-async def health_check(request):
-    return web.Response(text="OK", status=200)
-
-def setup_web_server():
-    app = web.Application()
-    
-    app.router.add_get('/', handle)
-    app.router.add_get('/health', health_check)
-    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
-    return app
-
-async def webhook_handler(request):
+async def handle_donation_webhook(request):
+    """Обработчик вебхука DonationAlerts"""
     try:
-        # Получаем обновление от Telegram
-        update = await request.json()
-        await dp.feed_webhook_update(bot, update)
-        return web.Response(text="OK")
+        # Проверяем токен авторизации
+        auth_token = request.headers.get('Authorization')
+        if auth_token != f"Bearer {DONATION_ALERTS_TOKEN}":
+            logger.warning(f"Invalid auth token: {auth_token}")
+            return web.Response(status=403)
+        
+        data = await request.json()
+        logger.info(f"Donation received: {data}")
+
+        # Проверяем, что это валидный платеж
+        if data.get('status') == 'success':
+            amount = int(float(data.get('amount', 0)))
+            user_message = data.get('message', '')
+            
+            # Извлекаем Telegram username или ID из сообщения
+            telegram_username = None
+            telegram_id = None
+            if user_message.startswith('@'):
+                telegram_username = user_message[1:]
+            elif 'TelegramID_' in user_message:
+                telegram_id = int(user_message.replace('TelegramID_', ''))
+            
+            # Рассчитываем количество примерок (1 примерка = 30 руб)
+            tries_added = amount // PRICE_PER_TRY
+            
+            if not telegram_username and not telegram_id:
+                logger.warning("No valid user identifier in donation message")
+                return web.Response(status=200)
+            
+            headers = {
+                "Authorization": f"Token {BASEROW_TOKEN}",
+                "Content-Type": "application/json"
+            }
+            
+            async with aiohttp.ClientSession() as session:
+                # Находим пользователя
+                if telegram_username:
+                    url = f"{baserow.base_url}/?user_field_names=true&filter__username__equal={telegram_username}"
+                else:
+                    url = f"{baserow.base_url}/?user_field_names=true&filter__user_id__equal={telegram_id}"
+                
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Baserow GET error: {resp.status}")
+                        return web.Response(status=200)
+                    rows = await resp.json()
+                
+                if rows.get("results"):
+                    row = rows["results"][0]
+                    row_id = row["id"]
+                    current_tries = row.get("tries_left", 0)
+                    new_tries = current_tries + tries_added
+                    
+                    # Обновляем количество попыток
+                    update_url = f"{baserow.base_url}/{row_id}/?user_field_names=true"
+                    update_data = {
+                        "tries_left": new_tries,
+                        "last_payment_amount": amount,
+                        "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    
+                    async with session.patch(update_url, headers=headers, json=update_data) as resp:
+                        if resp.status == 200:
+                            logger.info(f"Updated tries for user {telegram_username or telegram_id} to {new_tries}")
+                            
+                            # Отправляем уведомление пользователю
+                            try:
+                                if telegram_id:
+                                    await bot.send_message(
+                                        telegram_id,
+                                        f"✅ Оплата получена! Вам добавлено {tries_added} примерок.\n"
+                                        f"Теперь у вас {new_tries} доступных примерок."
+                                    )
+                            except Exception as e:
+                                logger.error(f"Error sending notification: {e}")
+            
+            await notify_admin(f"💰 Получен платеж: {amount} руб от {telegram_username or telegram_id}. Добавлено {tries_added} примерок.")
+    
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return web.Response(status=500, text="Internal Server Error")
+        logger.error(f"Error processing donation: {e}")
     
-async def start_web_server():
-    app = setup_web_server()
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
-    await site.start()
-    logger.info("Web server started")
-    
-async def on_shutdown():
-    logger.info("Shutting down...")
-    await bot.delete_webhook()  # Удаляем вебхук при завершении
-    logger.info("Webhook removed")
+    return web.Response(status=200)
 
 async def main():
+    # Delete any existing webhook first
     try:
-        logger.info("Starting bot...")
-        
-        # Запуск веб-сервера
-        app = setup_web_server()
-        runner = web.AppRunner(app)
-        await runner.setup()
-        
-        # Получаем URL вебхука (на Render он будет вида https://your-service.onrender.com)
-        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
-        
-        # Устанавливаем вебхук
-        await bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-        )
-        logger.info(f"Webhook set to: {webhook_url}")
-        
-        # Запускаем веб-сервер
-        site = web.TCPSite(runner, '0.0.0.0', int(os.getenv('PORT', 4000)))
-        await site.start()
-        logger.info("Web server started")
-        
-        # Запускаем фоновую задачу проверки результатов
-        asyncio.create_task(check_results())
-        
-        # Бесконечный цикл (чтобы бот не завершался)
-        while True:
-            await asyncio.sleep(3600)  # Просто ждём, пока сервер работает
-            
+        await bot.delete_webhook()
+        logger.info("Existing webhook deleted successfully")
     except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
+        logger.error(f"Error deleting webhook: {e}")
 
-if __name__ == "__main__":
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-        # Запуск main() с обработкой завершения
-        loop.run_until_complete(main())
-
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by keyboard interrupt")
-
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-
-    finally:
-        # Всегда вызываем on_shutdown() перед выходом
-        loop.run_until_complete(on_shutdown())
-        loop.close()
-        logger.info("Bot successfully shut down")
+    # Start web server for donation alerts
+    app = web.Application()
+    app.router.add_post('/donation_callback', handle_donation_webhook)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', 8080)
+    await site.start()
+    logger.info("Donation webhook server started at /donation_callback")
+    
+    # Start polling
+    await dp.start_polling(bot)
