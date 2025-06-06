@@ -1,4 +1,28 @@
+import os
+import logging
+import asyncio
+import aiohttp
+import shutil
+import sys
+import time
+from aiohttp import web
 
+PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
+
+if sys.platform == "linux":
+    import fcntl
+    try:
+        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Another instance is already running. Exiting.")
+        sys.exit(1)
+
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
     InlineKeyboardButton,
     FSInputFile,
     InputMediaPhoto
@@ -1175,6 +1199,90 @@ async def on_shutdown():
     logger.info("Shutting down...")
     await bot.delete_webhook()  # Удаляем вебхук при завершении
     logger.info("Webhook removed")
+	
+async def check_donations_loop():
+    logger.info("🔄 Запуск задачи проверки донатов через API DonationAlerts")
+    last_donation_ids = set()
+
+    headers = {
+        "Authorization": f"Bearer {DONATION_ALERTS_TOKEN}"
+    }
+
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    "https://www.donationalerts.com/api/v1/alerts/donations/",
+                    headers=headers
+                ) as resp:
+                    if resp.status != 200:
+                        logger.warning(f"❌ Ошибка запроса донатов: {resp.status}")
+                        await asyncio.sleep(60)
+                        continue
+
+                    data = await resp.json()
+                    donations = data.get("donations", [])
+
+                    for d in donations:
+                        donation_id = d.get("id")
+                        if donation_id in last_donation_ids:
+                            continue  # уже обработан
+
+                        last_donation_ids.add(donation_id)
+
+                        amount = int(float(d.get("amount", 0)))
+                        message = d.get("message", "")
+                        status = d.get("status")
+
+                        if status != "success":
+                            continue  # только успешные
+
+                        # Определение пользователя
+                        telegram_id = None
+                        telegram_username = None
+
+                        if message.startswith('@'):
+                            telegram_username = message[1:].strip()
+                        elif "TelegramID_" in message:
+                            try:
+                                telegram_id = int(message.replace("TelegramID_", "").strip())
+                            except ValueError:
+                                continue
+
+                        tries = max(1, amount // PRICE_PER_TRY)
+                        logger.info(f"💸 Новый донат: {amount} руб от {telegram_username or telegram_id}, примерок: {tries}")
+
+                        result = await baserow.upsert_row(
+                            user_id=telegram_id if telegram_id else 0,
+                            username=telegram_username or "",
+                            data={
+                                "tries_left": tries,
+                                "payment_status": "Оплачено (через API)",
+                                "last_payment_amount": amount,
+                                "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "status": "Активен"
+                            }
+                        )
+
+                        # Отправляем уведомление пользователю
+                        if telegram_id:
+                            try:
+                                await bot.send_message(
+                                    telegram_id,
+                                    f"✅ Оплата {amount} руб получена!\nВам доступно {tries} примерок."
+                                )
+                            except Exception as e:
+                                logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {telegram_id}: {e}")
+
+                        await notify_admin(
+                            f"💰 Оплата {amount} руб от {telegram_username or telegram_id}, начислено {tries} примерок."
+                        )
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в check_donations_loop: {e}")
+
+        await asyncio.sleep(60)
+	
 
 async def main():
     try:
@@ -1200,6 +1308,7 @@ async def main():
         
         # Запускаем фоновую задачу проверки результатов
         asyncio.create_task(check_results())
+		asyncio.create_task(check_donations_loop())
         
         # Бесконечный цикл (чтобы бот не завершался)
         while True:
