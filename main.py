@@ -902,6 +902,7 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
                     url=make_donation_link(user, 1, False)
+                )  # <-- Добавлена закрывающая скобка
             ],
             [
                 InlineKeyboardButton(
