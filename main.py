@@ -1,4 +1,62 @@
+import os
+import logging
+import asyncio
+import aiohttp
+import shutil
+import sys
+import time
+from aiohttp import web
 
+PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
+
+if sys.platform == "linux":
+    import fcntl
+    try:
+        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Another instance is already running. Exiting.")
+        sys.exit(1)
+
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
+    FSInputFile,
+    InputMediaPhoto
+)
+from aiogram.enums import ParseMode
+from aiogram.client.default import DefaultBotProperties
+from supabase import create_client, Client
+from dotenv import load_dotenv
+
+# Загрузка переменных окружения
+load_dotenv()
+
+# Настройка логирования
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+    handlers=[
+        logging.FileHandler("bot.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Конфигурация
+CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
+MIN_PAYMENT_AMOUNT = 1  # Минимальная сумма оплаты (1 рубль за 1 примерку)
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
+TABLE_ID = int(os.getenv("TABLE_ID"))
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+PRICE_PER_TRY = 1  # Цена за одну примерку в рублях (1 рубль)
+FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "examples"
@@ -100,7 +158,7 @@ class BaserowAPI:
 
 baserow = BaserowAPI()
 
-def make_donation_link(user: types.User, amount: int = 30, fixed: bool = True) -> str:
+def make_donation_link(user: types.User, amount: int = 1, fixed: bool = True) -> str:
     """Генерирует ссылку для оплаты через DonationAlerts"""
     username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
     message = username.replace(" ", "_")
@@ -643,29 +701,35 @@ async def handle_photo(message: types.Message):
             await message.answer(
                 "🚫 У вас закончились бесплатные примерки.\n\n"
                 "Для продолжения работы оплатите услугу:\n"
-                "💵 Стоимость одной примерки: 30 руб.\n"
+                "💵 Стоимость одной примерки: 1 руб.\n"
                 "После оплаты вам будет доступно количество примерок в соответствии с внесенной суммой.\n\n"
                 "Например:\n"
-                "30 руб = 1 примерка\n"
-                "60 руб = 2 примерки\n"
-                "90 руб = 3 примерки и т.д.",
+                "1 руб = 1 примерка\n"
+                "10 руб = 10 примерок\n"
+                "100 руб = 100 примерок и т.д.",
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=[
                     [
                         InlineKeyboardButton(
-                            text="💳 Оплатить 30 руб (1 примерка)", 
-                            url=make_donation_link(user, 30)
+                            text="💳 Оплатить 1 руб (1 примерка)", 
+                            url=make_donation_link(user, 1)
                         )
                     ],
                     [
                         InlineKeyboardButton(
-                            text="💳 Оплатить 60 руб (2 примерки)", 
-                            url=make_donation_link(user, 60)
+                            text="💳 Оплатить 10 руб (10 примерок)", 
+                            url=make_donation_link(user, 10)
+                        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            text="💳 Оплатить 100 руб (100 примерок)", 
+                            url=make_donation_link(user, 100)
                         )
                     ],
                     [
                         InlineKeyboardButton(
                             text="💳 Оплатить произвольную сумму", 
-                            url=make_donation_link(user, 30, False)
+                            url=make_donation_link(user, 1, False)
                         )
                     ],
                     [
@@ -772,20 +836,26 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить 30 руб (1 примерка)", 
-                    url=make_donation_link(user, 30)
+                    text="💳 Оплатить 1 руб (1 примерка)", 
+                    url=make_donation_link(user, 1)
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить 60 руб (2 примерки)", 
-                    url=make_donation_link(user, 60)
+                    text="💳 Оплатить 10 руб (10 примерок)", 
+                    url=make_donation_link(user, 10)
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 100 руб (100 примерок)", 
+                    url=make_donation_link(user, 100)
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
-                    url=make_donation_link(user, 30, False)
+                    url=make_donation_link(user, 1, False)
                 )
             ],
             [
@@ -811,6 +881,10 @@ async def confirm_donation(callback_query: types.CallbackQuery):
 async def handle_donation_webhook(request):
     """Обработчик вебхука DonationAlerts"""
     try:
+        # Логируем входящий вебхук
+        logger.info(f"Incoming webhook headers: {dict(request.headers)}")
+        logger.info(f"Incoming webhook body: {await request.text()}")
+        
         # Проверяем токен авторизации
         auth_token = request.headers.get('Authorization')
         if auth_token != f"Bearer {DONATION_ALERTS_TOKEN}":
@@ -836,16 +910,23 @@ async def handle_donation_webhook(request):
                 except ValueError:
                     logger.error(f"Invalid Telegram ID format in message: {user_message}")
             
-            # Рассчитываем количество примерок (1 примерка = 30 руб)
-            tries_added = max(1, amount // PRICE_PER_TRY)
-            
+            # Обработка случая, когда пользователь не указал Telegram username или ID
             if not telegram_username and not telegram_id:
-                logger.warning("No valid user identifier in donation message")
+                admin_msg = (
+                    f"⚠️ Получен платеж {amount} руб, но не удалось определить пользователя.\n"
+                    f"Сообщение: {user_message}"
+                )
+                await notify_admin(admin_msg)
                 return web.Response(status=200)
             
-            # Получаем данные пользователя для обновления
-            user_identifier = telegram_username or f"TelegramID_{telegram_id}"
-            logger.info(f"Processing payment for {user_identifier}, amount: {amount} руб, tries to add: {tries_added}")
+            # Рассчитываем количество примерок (1 примерка = 1 руб)
+            tries_added = max(1, amount // PRICE_PER_TRY) if amount >= PRICE_PER_TRY else 0
+            
+            if tries_added == 0:
+                logger.warning(f"Amount {amount} is less than PRICE_PER_TRY {PRICE_PER_TRY}")
+                return web.Response(status=200)
+            
+            logger.info(f"Processing payment for {telegram_username or telegram_id}, amount: {amount} руб, tries to add: {tries_added}")
 
             # Обновляем данные в Baserow
             update_success = False
@@ -880,12 +961,12 @@ async def handle_donation_webhook(request):
 
                 if result:
                     update_success = True
-                    logger.info(f"Successfully updated Baserow for {user_identifier}")
+                    logger.info(f"Successfully updated Baserow for {telegram_username or telegram_id}")
                 else:
-                    logger.error(f"Failed to update Baserow for {user_identifier}")
+                    logger.error(f"Failed to update Baserow for {telegram_username or telegram_id}")
 
             except Exception as e:
-                logger.error(f"Error updating Baserow for {user_identifier}: {e}")
+                logger.error(f"Error updating Baserow for {telegram_username or telegram_id}: {e}")
 
             # Отправляем уведомления
             try:
@@ -894,7 +975,7 @@ async def handle_donation_webhook(request):
                     f"💰 Получен платеж через DonationAlerts:\n"
                     f"• Сумма: {amount} руб\n"
                     f"• Примерок добавлено: {tries_added}\n"
-                    f"• Пользователь: {user_identifier}\n"
+                    f"• Пользователь: {telegram_username or f'TelegramID_{telegram_id}'}\n"
                     f"• Статус обновления: {'Успешно' if update_success else 'Ошибка'}"
                 )
                 await notify_admin(admin_message)
@@ -910,7 +991,7 @@ async def handle_donation_webhook(request):
                         await bot.send_message(telegram_id, user_message)
                     except Exception as e:
                         logger.error(f"Error sending notification to user {telegram_id}: {e}")
-                        await notify_admin(f"⚠️ Не удалось отправить уведомление пользователю {user_identifier}")
+                        await notify_admin(f"⚠️ Не удалось отправить уведомление пользователю {telegram_username or f'TelegramID_{telegram_id}'}")
 
             except Exception as e:
                 logger.error(f"Error sending notifications: {e}")
