@@ -859,8 +859,8 @@ async def handle_pay_command(message: types.Message):
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
-                    url=make_donation_link(message.from_user, 30, False
-			    )
+                    url=make_donation_link(message.from_user, 30, False)
+                )
             ],
             [
                 InlineKeyboardButton(
