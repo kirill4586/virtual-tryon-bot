@@ -67,6 +67,7 @@ DONATION_ALERTS_TOKEN = "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m"  # Токен
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+# Missing closing parenthesis here
 )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -973,8 +974,8 @@ async def handle_donation_webhook(request):
     
     return web.Response(status=200)
 
-async def on_startup(dp):
-    """Запуск веб-сервера для обработки вебхуков при старте бота"""
+async def main():
+    # Start web server for donation alerts
     app = web.Application()
     app.router.add_post('/donation_callback', handle_donation_webhook)
     runner = web.AppRunner(app)
@@ -982,11 +983,9 @@ async def on_startup(dp):
     site = web.TCPSite(runner, '0.0.0.0', 8080)
     await site.start()
     logger.info("Donation webhook server started at /donation_callback")
-
-async def on_shutdown(dp):
-    """Действия при выключении бота"""
-    logger.info("Shutting down...")
+    
+    # Start polling
+    await dp.start_polling(bot)
 
 if __name__ == '__main__':
-    from aiogram import executor
-    executor.start_polling(dp, on_startup=on_startup, on_shutdown=on_shutdown)
+    asyncio.run(main())
