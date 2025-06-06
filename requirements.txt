@@ -3,4 +3,4 @@ python-dotenv
 requests
 httpx
 aiogram==3.5.0
-supabase==2.3.1
+supabase
