@@ -1353,11 +1353,11 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-		
-		import socketio
+
 
 async def start_socketio_donation_listener():
     sio = socketio.AsyncClient()
+    ...
     token = DONATION_ALERTS_TOKEN
 
     @sio.event
