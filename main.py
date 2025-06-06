@@ -1214,7 +1214,6 @@ async def check_donations_loop():
                 async with session.get(
                     "https://www.donationalerts.com/api/v1/alerts/donations/",
                     headers=headers,
-                    ssl=False  # <- Вот здесь отключаем SSL
                 ) as resp:
                     if resp.status != 200:
                         logger.warning(f"❌ Ошибка запроса донатов: {resp.status}")
