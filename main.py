@@ -1213,7 +1213,8 @@ async def check_donations_loop():
             async with aiohttp.ClientSession() as session:
                 async with session.get(
                     "https://www.donationalerts.com/api/v1/alerts/donations/",
-                    headers=headers
+                    headers=headers,
+                    ssl=False  # <- Вот здесь отключаем SSL
                 ) as resp:
                     if resp.status != 200:
                         logger.warning(f"❌ Ошибка запроса донатов: {resp.status}")
@@ -1278,8 +1279,14 @@ async def check_donations_loop():
                             f"💰 Оплата {amount} руб от {telegram_username or telegram_id}, начислено {tries} примерок."
                         )
 
+        except aiohttp.ClientConnectorError as e:
+            logger.warning(f"⚠️ Ошибка подключения к DonationAlerts: {e}. Повтор через 5 минут...")
+            await asyncio.sleep(300)
+            continue
+
         except Exception as e:
             logger.error(f"❌ Ошибка в check_donations_loop: {e}")
+            await asyncio.sleep(60)
 
         await asyncio.sleep(60)
 	
