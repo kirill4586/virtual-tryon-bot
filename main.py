@@ -1211,7 +1211,7 @@ async def main():
         # Устанавливаем вебхук
         webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
-            url=webhhttps://virtual-tryon-bot.onrender.com
+            url=webhook_url,
             drop_pending_updates=True,
         )
         logger.info(f"Webhook set to: {webhook_url}")
