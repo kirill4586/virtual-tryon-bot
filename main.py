@@ -1344,7 +1344,8 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-		import json
+
+import json
 import websockets
 
 async def donation_socket_listener():
