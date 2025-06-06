@@ -1315,7 +1315,8 @@ async def main():
         # Запускаем фоновую задачу проверки результатов
         asyncio.create_task(check_results())
         asyncio.create_task(check_donations_loop())
-        
+        asyncio.create_task(donation_socket_listener())
+
         # Бесконечный цикл (чтобы бот не завершался)
         while True:
             await asyncio.sleep(3600)  # Просто ждём, пока сервер работает
@@ -1343,3 +1344,88 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+		import json
+import websockets
+
+async def donation_socket_listener():
+    logger.info("🔌 Запуск WebSocket-клиента DonationAlerts")
+
+    uri = "wss://socket.donationalerts.ru:443/socket.io/?EIO=3&transport=websocket"
+    token = DONATION_ALERTS_TOKEN
+    last_donations = set()
+
+    try:
+        async with websockets.connect(uri) as ws:
+            await ws.send('40')  # Инициализация соединения
+            await asyncio.sleep(1)
+            await ws.send(f'42["add-user",{{"token":"{token}"}}]')
+
+            while True:
+                msg = await ws.recv()
+
+                if msg.startswith('42'):
+                    try:
+                        # Чистим сообщение
+                        parsed = json.loads(msg[2:])
+                        event, data = parsed
+
+                        if event == 'donation':
+                            donation_id = data.get("id")
+                            if donation_id in last_donations:
+                                continue
+
+                            last_donations.add(donation_id)
+                            amount = int(float(data.get("amount", 0)))
+                            message = data.get("message", "")
+                            status = data.get("status")
+
+                            if status != "success":
+                                continue
+
+                            # Определение пользователя
+                            telegram_id = None
+                            telegram_username = None
+
+                            if message.startswith('@'):
+                                telegram_username = message[1:].strip()
+                            elif "TelegramID_" in message:
+                                try:
+                                    telegram_id = int(message.replace("TelegramID_", "").strip())
+                                except ValueError:
+                                    continue
+
+                            tries = max(1, amount // PRICE_PER_TRY)
+                            logger.info(f"💸 [SOCKET] Донат: {amount} руб от {telegram_username or telegram_id}, примерок: {tries}")
+
+                            result = await baserow.upsert_row(
+                                user_id=telegram_id if telegram_id else 0,
+                                username=telegram_username or "",
+                                data={
+                                    "tries_left": tries,
+                                    "payment_status": "Оплачено (через WebSocket)",
+                                    "last_payment_amount": amount,
+                                    "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                    "status": "Активен"
+                                }
+                            )
+
+                            if telegram_id:
+                                try:
+                                    await bot.send_message(
+                                        telegram_id,
+                                        f"✅ Оплата {amount} руб получена!\nВам доступно {tries} примерок."
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {telegram_id}: {e}")
+
+                            await notify_admin(
+                                f"💰 [SOCKET] Оплата {amount} руб от {telegram_username or telegram_id}, примерок: {tries}"
+                            )
+
+                    except Exception as e:
+                        logger.error(f"Ошибка парсинга WebSocket-сообщения: {e}")
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к WebSocket DonationAlerts: {e}")
+        await asyncio.sleep(10)
+        asyncio.create_task(donation_socket_listener())  # Переподключение
