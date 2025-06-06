@@ -1,4 +1,6 @@
 import os
+PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
+site = web.TCPSite(runner, '0.0.0.0', PORT)
 import logging
 import asyncio
 import aiohttp
@@ -986,7 +988,7 @@ async def main():
         site = web.TCPSite(runner, '0.0.0.0', 4000)
         await site.start()
         logger.info("Donation webhook server started at /donation_callback")
-        logger.info(f"Server started on port 4000") 
+        logger.info(f"Server started on port 4000")  # Добавьте отступ 
         
         await dp.start_polling(bot)
     except Exception as e:
