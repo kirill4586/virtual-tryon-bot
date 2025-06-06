@@ -5,18 +5,9 @@ import aiohttp
 import shutil
 import sys
 import time
+import json
+import websockets
 from aiohttp import web
-
-PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
-
-if sys.platform == "linux":
-    import fcntl
-    try:
-        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        logger.error("Another instance is already running. Exiting.")
-        sys.exit(1)
-
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -48,15 +39,15 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
-MIN_PAYMENT_AMOUNT = 1  # Минимальная сумма оплаты (1 рубль за 1 примерку)
+MIN_PAYMENT_AMOUNT = 1
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
 TABLE_ID = int(os.getenv("TABLE_ID"))
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-PRICE_PER_TRY = 1  # Цена за одну примерку в рублях (1 рубль)
-FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
+PRICE_PER_TRY = 1
+FREE_USERS = {6320348591, 973853935}
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "examples"
@@ -65,6 +56,7 @@ SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m")
+PORT = int(os.getenv("PORT", 4000))
 
 # Инициализация клиентов
 bot = Bot(
@@ -131,7 +123,6 @@ class BaserowAPI:
             return None
 
     async def reset_flags(self, user_id: int):
-        """Сбрасывает все флажки для указанного пользователя"""
         try:
             url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
             
@@ -158,8 +149,89 @@ class BaserowAPI:
 
 baserow = BaserowAPI()
 
+async def donation_socket_listener():
+    """WebSocket клиент для получения донатов в реальном времени"""
+    logger.info("🔌 Запуск WebSocket-клиента DonationAlerts")
+    uri = "wss://socket.donationalerts.ru:443/socket.io/?EIO=3&transport=websocket"
+    token = DONATION_ALERTS_TOKEN
+    last_donations = set()
+
+    while True:
+        try:
+            async with websockets.connect(uri) as ws:
+                await ws.send('40')  # Инициализация соединения
+                await asyncio.sleep(1)
+                await ws.send(f'42["add-user",{{"token":"{token}"}}]')
+
+                while True:
+                    msg = await ws.recv()
+
+                    if msg.startswith('42'):
+                        try:
+                            parsed = json.loads(msg[2:])
+                            event, data = parsed
+
+                            if event == 'donation':
+                                donation_id = data.get("id")
+                                if donation_id in last_donations:
+                                    continue
+
+                                last_donations.add(donation_id)
+                                amount = int(float(data.get("amount", 0)))
+                                message = data.get("message", "")
+                                status = data.get("status")
+
+                                if status != "success":
+                                    continue
+
+                                # Определение пользователя
+                                telegram_id = None
+                                telegram_username = None
+
+                                if message.startswith('@'):
+                                    telegram_username = message[1:].strip()
+                                elif "TelegramID_" in message:
+                                    try:
+                                        telegram_id = int(message.replace("TelegramID_", "").strip())
+                                    except ValueError:
+                                        continue
+
+                                tries = max(1, amount // PRICE_PER_TRY)
+                                logger.info(f"💸 [SOCKET] Донат: {amount} руб от {telegram_username or telegram_id}, примерок: {tries}")
+
+                                result = await baserow.upsert_row(
+                                    user_id=telegram_id if telegram_id else 0,
+                                    username=telegram_username or "",
+                                    data={
+                                        "tries_left": tries,
+                                        "payment_status": "Оплачено (через WebSocket)",
+                                        "last_payment_amount": amount,
+                                        "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                        "status": "Активен"
+                                    }
+                                )
+
+                                if telegram_id:
+                                    try:
+                                        await bot.send_message(
+                                            telegram_id,
+                                            f"✅ Оплата {amount} руб получена!\nВам доступно {tries} примерок."
+                                        )
+                                    except Exception as e:
+                                        logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {telegram_id}: {e}")
+
+                                await notify_admin(
+                                    f"💰 [SOCKET] Оплата {amount} руб от {telegram_username or telegram_id}, примерок: {tries}"
+                                )
+
+                        except Exception as e:
+                            logger.error(f"Ошибка парсинга WebSocket-сообщения: {e}")
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения к WebSocket DonationAlerts: {e}")
+            await asyncio.sleep(10)
+
 def make_donation_link(user: types.User, amount: int = 1, fixed: bool = True) -> str:
-    """Генерирует ссылку для оплаты через DonationAlerts"""
     username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
     message = username.replace(" ", "_")
     if fixed:
@@ -168,7 +240,6 @@ def make_donation_link(user: types.User, amount: int = 1, fixed: bool = True) ->
         return f"https://www.donationalerts.com/r/primerochnay777?amount={amount}&message={message}"
 
 async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
-    """Загружает файл в Supabase Storage"""
     if not supabase:
         return False
     
@@ -190,7 +261,6 @@ async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
         return False
 
 async def download_from_supabase(user_id: int, file_type: str, file_name: str, local_path: str):
-    """Скачивает файл из Supabase Storage"""
     if not supabase:
         return False
     
@@ -208,7 +278,6 @@ async def download_from_supabase(user_id: int, file_type: str, file_name: str, l
         return False
 
 async def get_user_tries(user_id: int) -> int:
-    """Получает количество доступных примерок для пользователя"""
     try:
         url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/?user_field_names=true&filter__user_id__equal={user_id}"
         headers = {
@@ -227,7 +296,6 @@ async def get_user_tries(user_id: int) -> int:
     return 0
 
 async def update_user_tries(user_id: int, tries: int):
-    """Обновляет количество доступных примерок для пользователя"""
     try:
         url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/?user_field_names=true&filter__user_id__equal={user_id}"
         headers = {
@@ -247,7 +315,6 @@ async def update_user_tries(user_id: int, tries: int):
         logger.error(f"Error updating user tries: {e}")
 
 def list_all_files(bucket, prefix):
-    """Рекурсивно обходит все файлы в Supabase Storage начиная с указанного префикса"""
     files = []
     try:
         items = bucket.list(prefix)
@@ -256,7 +323,6 @@ def list_all_files(bucket, prefix):
             if name:
                 full_path = f"{prefix}/{name}".strip("/")
                 if name.endswith('/'):
-                    # Папка — идем глубже
                     files += list_all_files(bucket, full_path)
                 else:
                     files.append(full_path)
@@ -278,7 +344,6 @@ async def is_processing(user_id: int) -> bool:
     return (len(photos) >= 2 or (len(photos) >= 1 and model_selected))
 
 async def send_initial_examples(chat_id: int):
-    """Отправляет первые три примера перед приветствием"""
     try:
         media = [
             InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1013DE2SDg8u0V69ePxTYki2WWSNaGWVi"),
@@ -292,7 +357,6 @@ async def send_initial_examples(chat_id: int):
         await bot.send_message(chat_id, "📸 Примеры работ временно недоступны")
 
 async def get_examples_list():
-    """Получает список примеров из папки primery в Supabase"""
     if not supabase:
         logger.warning("Supabase client not available")
         return []
@@ -318,7 +382,6 @@ async def get_examples_list():
         return []
 
 async def send_examples_page(chat_id: int, page: int = 0):
-    """Отправляет страницу с примерами"""
     try:
         examples = await get_examples_list()
         if not examples:
@@ -345,7 +408,6 @@ async def send_examples_page(chat_id: int, page: int = 0):
         if media:
             await bot.send_media_group(chat_id, media=media)
             
-            # Создаем клавиатуру для навигации
             keyboard_buttons = []
             
             if end_idx < len(examples):
@@ -405,7 +467,6 @@ async def notify_admin(message: str):
 
 async def send_welcome(user_id: int, username: str, full_name: str):
     try:
-        # Отправляем первые три примера
         await send_initial_examples(user_id)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -423,12 +484,11 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "👆 Фото прикрепляйте через скрепку, которая находится, где отправляете сообщения\n\n"
             "🌈 <b>Получите результат изображения виртуальной примерки!!</b> \n\n"
             "🔴 <b>Отправляйте по порядку сначала фото одежды, затем фото человека или выберите модель для примерки!!!</b> \n\n" 
-            "🔔 Если хотите примерить верхнюю и нижнюю одежду, отправьте сначала фото (верхней или нижней одежды) выполните примерку - получите результат обработки, затем уже отправляйте 2-ое фото (верхней или нижней одежды) и результат  первой обработки\n\n" 
+            "🔔 Если хотите примерить верхнюю и нижнюю одежду, отправьте сначала фото (верхней или нижней одежды) выполните примерку - получите результат обработки, затем уже отправляйте 2-ое фото (верхней или нижней одежды) и результат первой обработки\n\n" 
             "📸 <b>ОТПРАВЬТЕ ПЕРВОЕ ФОТО (одежда), ЖДУ!!!:</b>",
             reply_markup=keyboard
         )
         
-        # Сбрасываем флажки при старте
         await baserow.reset_flags(user_id)
         
         await baserow.upsert_row(user_id, username, {
@@ -436,7 +496,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "photo_clothes": False,
             "photo_person": False,
             "model_selected": None,
-            "tries_left": 1  # Первая примерка бесплатная
+            "tries_left": 1
         }) 
         
         await notify_admin(f"🆕 Пользователь: @{username} ({user_id})")
@@ -445,7 +505,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         logger.error(f"Welcome error for {user_id}: {e}")
 
 @dp.message(Command("start"))
-@dp.message(F.text & ~F.text.regexp(r'^\d+$'))  # Исключаем чисто числовые сообщения
+@dp.message(F.text & ~F.text.regexp(r'^\d+$'))
 async def handle_start(message: types.Message):
     if await is_processing(message.from_user.id):
         await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
@@ -632,7 +692,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
-                # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
                 
                 if clothes_photo_exists:
@@ -658,7 +717,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                         "photo2_received": True
                     })
                 
-                # Отправляем новое сообщение с фото модели в самый низ
                 await bot.send_photo(
                     chat_id=user_id,
                     photo=model_url,
@@ -688,15 +746,12 @@ async def handle_photo(message: types.Message):
     os.makedirs(user_dir, exist_ok=True)
     
     try:
-        # Проверяем, есть ли у пользователя бесплатный доступ
         if user_id in FREE_USERS:
             await process_photo(message, user, user_dir)
             return
             
-        # Получаем количество оставшихся попыток
         tries_left = await get_user_tries(user_id)
         
-        # Если попыток нет, предлагаем оплатить
         if tries_left <= 0:
             await message.answer(
                 "🚫 У вас закончились бесплатные примерки.\n\n"
@@ -742,7 +797,6 @@ async def handle_photo(message: types.Message):
             )
             return
             
-        # Если попытки есть, обрабатываем фото
         await process_photo(message, user, user_dir)
         
     except Exception as e:
@@ -750,7 +804,6 @@ async def handle_photo(message: types.Message):
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
 async def process_photo(message: types.Message, user: types.User, user_dir: str):
-    """Обрабатывает загруженное фото"""
     try:
         existing_photos = [
             f for f in os.listdir(user_dir)
@@ -763,11 +816,9 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
             return
             
-        # Проверяем, есть ли уже модель или первое фото
         model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
         first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
         
-        # Если это второе фото и нет модели, но есть первое фото
         if photo_number == 2 and not model_selected and first_photo_exists:
             photo = message.photo[-1]
             file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
@@ -776,10 +827,8 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             
             await bot.download(photo, destination=file_path)
             
-            # Загружаем фото в Supabase
             await upload_to_supabase(file_path, user.id, "photos")
             
-            # Уменьшаем количество попыток
             tries_left = await get_user_tries(user.id)
             if tries_left > 0:
                 await update_user_tries(user.id, tries_left - 1)
@@ -798,7 +847,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await notify_admin(f"📸 Новые фото от @{user.username} ({user.id})")
             return
             
-        # Если это первое фото
         if photo_number == 1:
             photo = message.photo[-1]
             file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
@@ -807,7 +855,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             
             await bot.download(photo, destination=file_path)
             
-            # Загружаем фото в Supabase
             await upload_to_supabase(file_path, user.id, "photos")
             
             await baserow.upsert_row(user.id, user.username, {
@@ -829,7 +876,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
 @dp.callback_query(F.data == "payment_options")
 async def show_payment_methods(callback_query: types.CallbackQuery):
-    """Упрощенное меню оплаты с одной кнопкой"""
     user = callback_query.from_user
     await callback_query.message.edit_text(
         "Для продолжения работы с ботом необходимо оплатить услугу:",
@@ -856,7 +902,6 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
                     url=make_donation_link(user, 1, False)
-                )
             ],
             [
                 InlineKeyboardButton(
@@ -881,11 +926,9 @@ async def confirm_donation(callback_query: types.CallbackQuery):
 async def handle_donation_webhook(request):
     """Обработчик вебхука DonationAlerts"""
     try:
-        # Логируем входящий вебхук
         logger.info(f"Incoming webhook headers: {dict(request.headers)}")
         logger.info(f"Incoming webhook body: {await request.text()}")
         
-        # Проверяем токен авторизации
         auth_token = request.headers.get('Authorization')
         if auth_token != f"Bearer {DONATION_ALERTS_TOKEN}":
             logger.warning(f"Invalid auth token: {auth_token}")
@@ -894,12 +937,10 @@ async def handle_donation_webhook(request):
         data = await request.json()
         logger.info(f"Donation received: {data}")
 
-        # Проверяем, что это валидный платеж
         if data.get('status') == 'success':
             amount = int(float(data.get('amount', 0)))
             user_message = data.get('message', '')
             
-            # Извлекаем Telegram username или ID из сообщения
             telegram_username = None
             telegram_id = None
             if user_message.startswith('@'):
@@ -910,7 +951,6 @@ async def handle_donation_webhook(request):
                 except ValueError:
                     logger.error(f"Invalid Telegram ID format in message: {user_message}")
             
-            # Обработка случая, когда пользователь не указал Telegram username или ID
             if not telegram_username and not telegram_id:
                 admin_msg = (
                     f"⚠️ Получен платеж {amount} руб, но не удалось определить пользователя.\n"
@@ -919,7 +959,6 @@ async def handle_donation_webhook(request):
                 await notify_admin(admin_msg)
                 return web.Response(status=200)
             
-            # Рассчитываем количество примерок (1 примерка = 1 руб)
             tries_added = max(1, amount // PRICE_PER_TRY) if amount >= PRICE_PER_TRY else 0
             
             if tries_added == 0:
@@ -928,10 +967,8 @@ async def handle_donation_webhook(request):
             
             logger.info(f"Processing payment for {telegram_username or telegram_id}, amount: {amount} руб, tries to add: {tries_added}")
 
-            # Обновляем данные в Baserow
             update_success = False
             try:
-                # Формируем данные для обновления
                 update_data = {
                     "tries_left": tries_added,
                     "last_payment_amount": amount,
@@ -940,11 +977,9 @@ async def handle_donation_webhook(request):
                     "status": "Активен"
                 }
 
-                # Если есть username, обновляем его тоже
                 if telegram_username:
                     update_data["username"] = telegram_username
 
-                # Ищем пользователя в Baserow
                 if telegram_id:
                     filter_field = "user_id"
                     filter_value = str(telegram_id)
@@ -952,9 +987,8 @@ async def handle_donation_webhook(request):
                     filter_field = "username"
                     filter_value = telegram_username
 
-                # Выполняем upsert в Baserow
                 result = await baserow.upsert_row(
-                    user_id=telegram_id if telegram_id else 0,  # 0 если нет ID
+                    user_id=telegram_id if telegram_id else 0,
                     username=telegram_username or "",
                     data=update_data
                 )
@@ -968,9 +1002,7 @@ async def handle_donation_webhook(request):
             except Exception as e:
                 logger.error(f"Error updating Baserow for {telegram_username or telegram_id}: {e}")
 
-            # Отправляем уведомления
             try:
-                # Уведомление администратору
                 admin_message = (
                     f"💰 Получен платеж через DonationAlerts:\n"
                     f"• Сумма: {amount} руб\n"
@@ -980,7 +1012,6 @@ async def handle_donation_webhook(request):
                 )
                 await notify_admin(admin_message)
 
-                # Уведомление пользователю (если есть telegram_id)
                 if telegram_id:
                     try:
                         user_message = (
@@ -1019,13 +1050,11 @@ async def check_results():
 
                 logger.info(f"📁 Checking user dir: {user_dir}")
 
-                # 1. Ищем локально result-файлы с любым поддерживаемым расширением
                 result_files = [
                     f for f in os.listdir(user_dir)
                     if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
                 ]
 
-                # 2. Если не найдено локально — пробуем скачать из Supabase
                 if not result_files:
                     for ext in SUPPORTED_EXTENSIONS:
                         try:
@@ -1039,12 +1068,11 @@ async def check_results():
 
                             logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
                             result_files = [f"result{ext}"]
-                            break  # Прерываем цикл после успешной загрузки
+                            break
                         except Exception as e:
                             logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
                             continue
 
-                # 3. Если файлы найдены, обрабатываем первый подходящий
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
 
@@ -1068,7 +1096,6 @@ async def check_results():
                             caption="🎉 Ваша виртуальная примерка готова!"
                         )
 
-                        # Загружаем результат в Supabase с новым уникальным именем
                         try:
                             file_ext = os.path.splitext(result_file)[1].lower()
                             supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
@@ -1085,7 +1112,6 @@ async def check_results():
                         except Exception as upload_error:
                             logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
 
-                        # Обновляем Baserow
                         try:
                             await baserow.upsert_row(user_id, "", {
                                 "status": "Результат отправлен",
@@ -1096,26 +1122,22 @@ async def check_results():
                         except Exception as db_error:
                             logger.error(f"❌ Ошибка обновления Baserow: {db_error}")
 
-                        # Удаляем локальную папку
                         try:
                             shutil.rmtree(user_dir)
                             logger.info(f"🗑️ Папка {user_dir} удалена")
                         except Exception as cleanup_error:
                             logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
-                        # Удаляем файлы пользователя из Supabase
                         try:
                             base = supabase.storage.from_(UPLOADS_BUCKET)
                             files_to_delete = []
 
-                            # Добавляем все возможные фото пользователя
                             for ext in SUPPORTED_EXTENSIONS:
                                 files_to_delete.extend([
                                     f"{user_id_str}/photos/photo_1{ext}",
                                     f"{user_id_str}/photos/photo_2{ext}"
                                 ])
 
-                            # Добавляем result-файлы из папки results
                             try:
                                 result_files_in_supabase = base.list(f"{user_id_str}/results")
                                 for f in result_files_in_supabase:
@@ -1124,7 +1146,6 @@ async def check_results():
                             except Exception as e:
                                 logger.warning(f"⚠️ Не удалось получить список result-файлов из results/: {e}")
 
-                            # Добавляем result-файлы из корня uploads/{user_id}/
                             try:
                                 root_files = base.list(user_id_str)
                                 for f in root_files:
@@ -1133,7 +1154,6 @@ async def check_results():
                             except Exception as e:
                                 logger.warning(f"⚠️ Не удалось получить список result-файлов из корня: {e}")
 
-                            # Удаляем только существующие
                             existing_files = []
                             for file_path in files_to_delete:
                                 try:
@@ -1179,7 +1199,6 @@ def setup_web_server():
 
 async def webhook_handler(request):
     try:
-        # Получаем обновление от Telegram
         update = await request.json()
         await dp.feed_webhook_update(bot, update)
         return web.Response(text="OK")
@@ -1197,9 +1216,9 @@ async def start_web_server():
     
 async def on_shutdown():
     logger.info("Shutting down...")
-    await bot.delete_webhook()  # Удаляем вебхук при завершении
+    await bot.delete_webhook()
     logger.info("Webhook removed")
-	
+
 async def check_donations_loop():
     logger.info("🔄 Запуск задачи проверки донатов через API DonationAlerts")
     last_donation_ids = set()
@@ -1226,18 +1245,16 @@ async def check_donations_loop():
                     for d in donations:
                         donation_id = d.get("id")
                         if donation_id in last_donation_ids:
-                            continue  # уже обработан
+                            continue
 
                         last_donation_ids.add(donation_id)
-
                         amount = int(float(d.get("amount", 0)))
                         message = d.get("message", "")
                         status = d.get("status")
 
                         if status != "success":
-                            continue  # только успешные
+                            continue
 
-                        # Определение пользователя
                         telegram_id = None
                         telegram_username = None
 
@@ -1264,7 +1281,6 @@ async def check_donations_loop():
                             }
                         )
 
-                        # Отправляем уведомление пользователю
                         if telegram_id:
                             try:
                                 await bot.send_message(
@@ -1288,18 +1304,15 @@ async def check_donations_loop():
             await asyncio.sleep(60)
 
         await asyncio.sleep(60)
-	
 
 async def main():
     try:
         logger.info("Starting bot...")
         
-        # Запуск веб-сервера
         app = setup_web_server()
         runner = web.AppRunner(app)
         await runner.setup()
         
-        # Устанавливаем вебхук
         webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
@@ -1307,19 +1320,16 @@ async def main():
         )
         logger.info(f"Webhook set to: {webhook_url}")
         
-        # Запускаем веб-сервер
         site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
         logger.info(f"Web server started on port {PORT}")
         
-        # Запускаем фоновую задачу проверки результатов
         asyncio.create_task(check_results())
         asyncio.create_task(check_donations_loop())
         asyncio.create_task(donation_socket_listener())
 
-        # Бесконечный цикл (чтобы бот не завершался)
         while True:
-            await asyncio.sleep(3600)  # Просто ждём, пока сервер работает
+            await asyncio.sleep(3600)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")
@@ -1329,8 +1339,6 @@ if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
-        # Запуск main() с обработкой завершения
         loop.run_until_complete(main())
 
     except KeyboardInterrupt:
@@ -1340,93 +1348,6 @@ if __name__ == "__main__":
         logger.critical(f"Fatal error: {e}")
 
     finally:
-        # Всегда вызываем on_shutdown() перед выходом
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-
-import json
-import websockets
-
-async def donation_socket_listener():
-    logger.info("🔌 Запуск WebSocket-клиента DonationAlerts")
-
-    uri = "wss://socket.donationalerts.ru:443/socket.io/?EIO=3&transport=websocket"
-    token = DONATION_ALERTS_TOKEN
-    last_donations = set()
-
-    try:
-        async with websockets.connect(uri) as ws:
-            await ws.send('40')  # Инициализация соединения
-            await asyncio.sleep(1)
-            await ws.send(f'42["add-user",{{"token":"{token}"}}]')
-
-            while True:
-                msg = await ws.recv()
-
-                if msg.startswith('42'):
-                    try:
-                        # Чистим сообщение
-                        parsed = json.loads(msg[2:])
-                        event, data = parsed
-
-                        if event == 'donation':
-                            donation_id = data.get("id")
-                            if donation_id in last_donations:
-                                continue
-
-                            last_donations.add(donation_id)
-                            amount = int(float(data.get("amount", 0)))
-                            message = data.get("message", "")
-                            status = data.get("status")
-
-                            if status != "success":
-                                continue
-
-                            # Определение пользователя
-                            telegram_id = None
-                            telegram_username = None
-
-                            if message.startswith('@'):
-                                telegram_username = message[1:].strip()
-                            elif "TelegramID_" in message:
-                                try:
-                                    telegram_id = int(message.replace("TelegramID_", "").strip())
-                                except ValueError:
-                                    continue
-
-                            tries = max(1, amount // PRICE_PER_TRY)
-                            logger.info(f"💸 [SOCKET] Донат: {amount} руб от {telegram_username or telegram_id}, примерок: {tries}")
-
-                            result = await baserow.upsert_row(
-                                user_id=telegram_id if telegram_id else 0,
-                                username=telegram_username or "",
-                                data={
-                                    "tries_left": tries,
-                                    "payment_status": "Оплачено (через WebSocket)",
-                                    "last_payment_amount": amount,
-                                    "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                    "status": "Активен"
-                                }
-                            )
-
-                            if telegram_id:
-                                try:
-                                    await bot.send_message(
-                                        telegram_id,
-                                        f"✅ Оплата {amount} руб получена!\nВам доступно {tries} примерок."
-                                    )
-                                except Exception as e:
-                                    logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {telegram_id}: {e}")
-
-                            await notify_admin(
-                                f"💰 [SOCKET] Оплата {amount} руб от {telegram_username or telegram_id}, примерок: {tries}"
-                            )
-
-                    except Exception as e:
-                        logger.error(f"Ошибка парсинга WebSocket-сообщения: {e}")
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка подключения к WebSocket DonationAlerts: {e}")
-        await asyncio.sleep(10)
-        asyncio.create_task(donation_socket_listener())  # Переподключение
