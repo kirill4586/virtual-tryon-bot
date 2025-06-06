@@ -984,11 +984,11 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
         site = web.TCPSite(runner, '0.0.0.0', 4000)
-        await site.start()
-        logger.info("Donation webhook server started at /donation_callback")
-		logger.info(f"Server started on port 4000") 
-        
-        await dp.start_polling(bot)
+            await site.start()
+    logger.info("Donation webhook server started at /donation_callback")
+    logger.info(f"Server started on port 4000")  # <- Одинаковый отступ с предыдущей строкой
+    
+    await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Fatal error: {e}")
         # Здесь можно добавить логику перезапуска с задержкой
