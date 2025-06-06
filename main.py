@@ -503,10 +503,6 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("more_examples_"))
-async def handle_test(request):
-    return web.Response(text="Webhook server is running!")
-
-app.router.add_get('/test', handle_test)
 async def more_examples(callback_query: types.CallbackQuery):
     try:
         page = int(callback_query.data.split("_")[-1])
@@ -747,61 +743,68 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
             return
             
-        # Get the highest resolution photo
-        photo = message.photo[-1]
+        # Проверяем, есть ли уже модель или первое фото
+        model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
+        first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
         
-        # Generate safe filename
-        file_ext = '.jpg'  # Default to jpg
-        for ext in SUPPORTED_EXTENSIONS:
-            if photo.file_unique_id.endswith(ext[1:]):
-                file_ext = ext
-                break
-                
-        file_name = f"photo_{photo_number}{file_ext}"
-        file_path = os.path.join(user_dir, file_name)
-        
-        # Ensure directory exists
-        os.makedirs(user_dir, exist_ok=True)
-        
-        # Download the photo
-        await bot.download(photo, destination=file_path)
-        
-        # Verify the file was saved
-        if not os.path.exists(file_path):
-            raise Exception("File not saved properly")
+        # Если это второе фото и нет модели, но есть первое фото
+        if photo_number == 2 and not model_selected and first_photo_exists:
+            photo = message.photo[-1]
+            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
+            file_name = f"photo_{photo_number}{file_ext}"
+            file_path = os.path.join(user_dir, file_name)
             
-        # Upload to Supabase
-        upload_success = await upload_to_supabase(file_path, user.id, "photos")
-        if not upload_success:
-            raise Exception("Supabase upload failed")
-        
-        # Update database
-        update_data = {
-            f"photo{'1' if photo_number == 1 else '2'}_received": True,
-            "status": "В обработке" if photo_number == 2 else "Ожидается фото человека/модели"
-        }
-        
-        if photo_number == 2:
-            # Decrement tries for non-free users
-            if user.id not in FREE_USERS:
-                tries_left = await get_user_tries(user.id)
-                if tries_left > 0:
-                    await update_user_tries(user.id, tries_left - 1)
-        
-        await baserow.upsert_row(user.id, user.username, update_data)
-        
-        response_text = (
-            "✅ Оба файла получены.\n\n🔄 Идёт примерка. Ожидайте результат!"
-            if photo_number == 2 else
-            "✅ Фото одежды получено.\n\nТеперь выберите модель из меню или отправьте фото человека."
-        )
-        
-        await message.answer(response_text)
-        if photo_number == 2:
+            await bot.download(photo, destination=file_path)
+            
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
+            
+            # Уменьшаем количество попыток
+            tries_left = await get_user_tries(user.id)
+            if tries_left > 0:
+                await update_user_tries(user.id, tries_left - 1)
+            
+            await baserow.upsert_row(user.id, user.username, {
+                "photo_person": True,
+                "status": "В обработке",
+                "photo1_received": True,
+                "photo2_received": True
+            })
+            
+            await message.answer(
+                "✅ Оба файла получены.\n\n"
+                "🔄 Идёт примерка. Ожидайте результат!"
+            )
             await notify_admin(f"📸 Новые фото от @{user.username} ({user.id})")
+            return
+            
+        # Если это первое фото
+        if photo_number == 1:
+            photo = message.photo[-1]
+            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
+            file_name = f"photo_{photo_number}{file_ext}"
+            file_path = os.path.join(user_dir, file_name)
+            
+            await bot.download(photo, destination=file_path)
+            
+            # Загружаем фото в Supabase
+            await upload_to_supabase(file_path, user.id, "photos")
+            
+            await baserow.upsert_row(user.id, user.username, {
+                "photo_clothes": True,
+                "status": "Ожидается фото человека/модели",
+                "photo1_received": True,
+                "photo2_received": False
+            })
+            
+            response_text = (
+                "✅ Фото одежды получено.\n\n"
+                "Теперь выберите модель из меню или отправьте фото человека."
+            )
+            await message.answer(response_text)
             
     except Exception as e:
-        logger.error(f"Error processing photo: {str(e)}", exc_info=True)
+        logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
 @dp.callback_query(F.data == "payment_options")
