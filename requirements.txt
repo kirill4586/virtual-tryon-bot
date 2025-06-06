@@ -1,10 +1,9 @@
+aiogram==3.5.0
 aiohttp
 python-dotenv
+supabase
 requests
 httpx
-aiohttp==3.9.3
-aiogram==3.0.0b7
-supabase==2.3.1
-python-dotenv==1.0.0
+yookassa
 
 
