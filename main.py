@@ -1327,7 +1327,8 @@ async def main():
         
         asyncio.create_task(check_results())
         asyncio.create_task(check_donations_loop())
-        asyncio.create_task(donation_socket_listener())
+        asyncio.create_task(start_socketio_donation_listener())
+
 
         while True:
             await asyncio.sleep(3600)
@@ -1352,3 +1353,86 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+		
+		import socketio
+
+async def start_socketio_donation_listener():
+    sio = socketio.AsyncClient()
+    token = DONATION_ALERTS_TOKEN
+
+    @sio.event
+    async def connect():
+        logger.info("🔌 Socket.IO соединение установлено с DonationAlerts")
+        await sio.emit("add-user", {"token": token})
+
+    @sio.event
+    async def connect_error(data):
+        logger.error(f"❌ Ошибка подключения к Socket.IO: {data}")
+
+    @sio.event
+    async def disconnect():
+        logger.warning("⚠️ Socket.IO соединение разорвано")
+
+    @sio.on("donation")
+    async def on_donation(data):
+        try:
+            logger.info(f"💸 [SOCKET.IO] Получен донат: {data}")
+
+            amount = int(float(data.get("amount", 0)))
+            message = data.get("message", "")
+            status = data.get("status")
+
+            if status != "success":
+                logger.warning("❌ Донат неуспешен, игнорируем.")
+                return
+
+            telegram_id = None
+            telegram_username = None
+
+            if message.startswith('@'):
+                telegram_username = message[1:].strip()
+            elif "TelegramID_" in message:
+                try:
+                    telegram_id = int(message.replace("TelegramID_", "").strip())
+                except ValueError:
+                    logger.warning(f"⚠️ Не удалось распарсить Telegram ID из сообщения: {message}")
+                    return
+
+            tries = max(1, amount // PRICE_PER_TRY)
+
+            logger.info(f"🔗 Донат от {telegram_username or telegram_id} на {amount} руб → {tries} примерок")
+
+            result = await baserow.upsert_row(
+                user_id=telegram_id if telegram_id else 0,
+                username=telegram_username or "",
+                data={
+                    "tries_left": tries,
+                    "payment_status": "Оплачено (через WebSocket)",
+                    "last_payment_amount": amount,
+                    "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "status": "Активен"
+                }
+            )
+
+            if telegram_id:
+                try:
+                    await bot.send_message(
+                        telegram_id,
+                        f"✅ Ваш платёж на {amount} руб получен!\n"
+                        f"Вам доступно {tries} примерок."
+                    )
+                except Exception as e:
+                    logger.warning(f"⚠️ Не удалось отправить сообщение пользователю {telegram_id}: {e}")
+
+            await notify_admin(
+                f"💰 [SOCKET.IO] Оплата {amount} руб от {telegram_username or telegram_id}, начислено {tries} примерок."
+            )
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка обработки доната через socket.io: {e}")
+
+    try:
+        await sio.connect("https://socket.donationalerts.ru", transports=['websocket'])
+        await sio.wait()
+    except Exception as e:
+        logger.error(f"❌ Ошибка подключения к socket.io DonationAlerts: {e}")
