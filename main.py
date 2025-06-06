@@ -1,12 +1,14 @@
 import os
-PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
-site = web.TCPSite(runner, '0.0.0.0', PORT)
 import logging
 import asyncio
 import aiohttp
 import shutil
 import sys
 import time
+from aiohttp import web  # Этот импорт должен быть перед использованием web.TCPSite
+
+PORT = int(os.getenv("PORT", 4000))  # Использует порт из переменной окружения или 4000 по умолчанию
+
 if sys.platform == "linux":
     import fcntl
     try:
@@ -14,8 +16,10 @@ if sys.platform == "linux":
     except IOError:
         logger.error("Another instance is already running. Exiting.")
         sys.exit(1)
+
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
+# ... остальные импорты и код ...
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
     Message,
