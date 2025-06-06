@@ -864,55 +864,7 @@ async def confirm_donation(callback_query: types.CallbackQuery):
         "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти. "
         "При необходимости — напишите нам в поддержку."
     )
-    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts")
-    await callback_query.answer()
-
-@dp.message(Command("pay"))
-async def handle_pay_command(message: types.Message):
-    """Обработчик команды /pay - сразу перенаправляет на страницу оплаты"""
-    await message.answer(
-        "Переход на страницу оплаты:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить 30 руб (1 примерка)", 
-                    url=make_donation_link(message.from_user, 30)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить 60 руб (2 примерки)", 
-                    url=make_donation_link(message.from_user, 60)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить произвольную сумму", 
-                    url=make_donation_link(message.from_user, 30, False)
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="✅ Я оплатил", 
-                    callback_data="confirm_donation"
-                )
-            ]
-        ])
-    )
-
-@dp.message(Command("pay_help"))
-async def pay_help(message: types.Message):
-    """Упрощенная справка по оплате"""
-    await message.answer(
-        "💡 Как оплатить:\n"
-        "1. Нажмите кнопку «Оплатить»\n"
-        "2. Оплатите услугу на открывшейся странице\n"
-        "3. Нажмите кнопку «Я оплатил» после завершения платежа\n\n"
-        "🔹 30 руб = 1 примерка\n"
-        "🔹 60 руб = 2 примерки\n"
-        "🔹 90 руб = 3 примерки\n\n"
-        "После оплаты доступ будет автоматически активирован в течение нескольких минут."
-    )
+    await notify_admin(f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате через DonationAlerts. Требуется ручная проверка.")
 
 async def handle_donation_webhook(request):
     """Обработчик вебхука DonationAlerts"""
@@ -935,68 +887,94 @@ async def handle_donation_webhook(request):
             telegram_username = None
             telegram_id = None
             if user_message.startswith('@'):
-                telegram_username = user_message[1:]
+                telegram_username = user_message[1:].strip()
             elif 'TelegramID_' in user_message:
-                telegram_id = int(user_message.replace('TelegramID_', ''))
+                try:
+                    telegram_id = int(user_message.replace('TelegramID_', '').strip())
+                except ValueError:
+                    logger.error(f"Invalid Telegram ID format in message: {user_message}")
             
             # Рассчитываем количество примерок (1 примерка = 30 руб)
-            tries_added = amount // PRICE_PER_TRY
+            tries_added = max(1, amount // PRICE_PER_TRY)
             
             if not telegram_username and not telegram_id:
                 logger.warning("No valid user identifier in donation message")
                 return web.Response(status=200)
             
-            headers = {
-                "Authorization": f"Token {BASEROW_TOKEN}",
-                "Content-Type": "application/json"
-            }
-            
-            async with aiohttp.ClientSession() as session:
-                # Находим пользователя
+            # Получаем данные пользователя для обновления
+            user_identifier = telegram_username or f"TelegramID_{telegram_id}"
+            logger.info(f"Processing payment for {user_identifier}, amount: {amount} руб, tries to add: {tries_added}")
+
+            # Обновляем данные в Baserow
+            update_success = False
+            try:
+                # Формируем данные для обновления
+                update_data = {
+                    "tries_left": tries_added,
+                    "last_payment_amount": amount,
+                    "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "payment_status": "Оплачено",
+                    "status": "Активен"
+                }
+
+                # Если есть username, обновляем его тоже
                 if telegram_username:
-                    url = f"{baserow.base_url}/?user_field_names=true&filter__username__equal={telegram_username}"
+                    update_data["username"] = telegram_username
+
+                # Ищем пользователя в Baserow
+                if telegram_id:
+                    filter_field = "user_id"
+                    filter_value = str(telegram_id)
                 else:
-                    url = f"{baserow.base_url}/?user_field_names=true&filter__user_id__equal={telegram_id}"
-                
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Baserow GET error: {resp.status}")
-                        return web.Response(status=200)
-                    rows = await resp.json()
-                
-                if rows.get("results"):
-                    row = rows["results"][0]
-                    row_id = row["id"]
-                    current_tries = row.get("tries_left", 0)
-                    new_tries = current_tries + tries_added
-                    
-                    # Обновляем количество попыток
-                    update_url = f"{baserow.base_url}/{row_id}/?user_field_names=true"
-                    update_data = {
-                        "tries_left": new_tries,
-                        "last_payment_amount": amount,
-                        "last_payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                    }
-                    
-                    async with session.patch(update_url, headers=headers, json=update_data) as resp:
-                        if resp.status == 200:
-                            logger.info(f"Updated tries for user {telegram_username or telegram_id} to {new_tries}")
-                            
-                            # Отправляем уведомление пользователю
-                            try:
-                                if telegram_id:
-                                    await bot.send_message(
-                                        telegram_id,
-                                        f"✅ Оплата получена! Вам добавлено {tries_added} примерок.\n"
-                                        f"Теперь у вас {new_tries} доступных примерок."
-                                    )
-                            except Exception as e:
-                                logger.error(f"Error sending notification: {e}")
-            
-            await notify_admin(f"💰 Получен платеж: {amount} руб от {telegram_username or telegram_id}. Добавлено {tries_added} примерок.")
-    
+                    filter_field = "username"
+                    filter_value = telegram_username
+
+                # Выполняем upsert в Baserow
+                result = await baserow.upsert_row(
+                    user_id=telegram_id if telegram_id else 0,  # 0 если нет ID
+                    username=telegram_username or "",
+                    data=update_data
+                )
+
+                if result:
+                    update_success = True
+                    logger.info(f"Successfully updated Baserow for {user_identifier}")
+                else:
+                    logger.error(f"Failed to update Baserow for {user_identifier}")
+
+            except Exception as e:
+                logger.error(f"Error updating Baserow for {user_identifier}: {e}")
+
+            # Отправляем уведомления
+            try:
+                # Уведомление администратору
+                admin_message = (
+                    f"💰 Получен платеж через DonationAlerts:\n"
+                    f"• Сумма: {amount} руб\n"
+                    f"• Примерок добавлено: {tries_added}\n"
+                    f"• Пользователь: {user_identifier}\n"
+                    f"• Статус обновления: {'Успешно' if update_success else 'Ошибка'}"
+                )
+                await notify_admin(admin_message)
+
+                # Уведомление пользователю (если есть telegram_id)
+                if telegram_id:
+                    try:
+                        user_message = (
+                            f"✅ Ваш платеж на {amount} руб успешно получен!\n\n"
+                            f"Вам добавлено {tries_added} примерок.\n"
+                            f"Теперь вы можете продолжить работу с ботом."
+                        )
+                        await bot.send_message(telegram_id, user_message)
+                    except Exception as e:
+                        logger.error(f"Error sending notification to user {telegram_id}: {e}")
+                        await notify_admin(f"⚠️ Не удалось отправить уведомление пользователю {user_identifier}")
+
+            except Exception as e:
+                logger.error(f"Error sending notifications: {e}")
+
     except Exception as e:
-        logger.error(f"Error processing donation: {e}")
+        logger.error(f"Error processing donation webhook: {e}", exc_info=True)
     
     return web.Response(status=200)
 
