@@ -503,6 +503,10 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("more_examples_"))
+async def handle_test(request):
+    return web.Response(text="Webhook server is running!")
+
+app.router.add_get('/test', handle_test)
 async def more_examples(callback_query: types.CallbackQuery):
     try:
         page = int(callback_query.data.split("_")[-1])
