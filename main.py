@@ -63,9 +63,11 @@ MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m"  # Токен вебхука DonationAlerts
 
 # Инициализация клиентов
+# Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
