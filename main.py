@@ -1,4 +1,14 @@
-
+import os
+import logging
+import asyncio
+import aiohttp
+import shutil
+import sys
+import time
+import json
+import websockets
+import socketio
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -46,7 +56,7 @@ UPLOADS_BUCKET = "uploads"
 SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
-DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "86S92IBrd8PTovv8W9LHaIFAeBV2l1iuHbXeEa4m")
+DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9.eyJhdWQiOiIxNTIzNiIsImp0aSI6IjBiZTJiMTFhZWRkMWQwODliZDZmMDUxYmNjMGVhZGNiZTc1MTc2NjNjNzFkY2FkMDUzMWQ3NzRkZDRiNzI1NGIxNDc5MDU0OGU5MmFhNWI2IiwiaWF0IjoxNzQ5MjYwNDY2LjM1MTgsIm5iZiI6MTc0OTI2MDQ2Ni4zNTE4LCJleHAiOjE3ODA3OTY0NjYuMzQxNywic3ViIjoiMTQxMzc4NjgiLCJzY29wZXMiOlsib2F1dGgtZG9uYXRpb24tc3Vic2NyaWJlIiwib2F1dGgtdXNlci1zaG93Il19.IYkrrXztawH5tACBHApOOviRbXymvREktwDeFhlKbFNdgJegTqS2QYnh3xouxFvh-MC_WFk_uRq47aj-Qe-m4erOQg-V9LQMop6ZpSbis4_EMj5DxF5OyVwEsjFy5NeUm7e_EPu-DPA7CCOA4OcAzGUvAgudWXjNEVhd0w2-f-ub5lqVCJyCHRP9Q_n614X45dv-WFtvTtm6TM1aOJ_Pd7vwGASEDlfX-4eHA0FH2onFcQIFpe7OSsBGq4ay-taW7dnUSVBGGnforhdNf3RPRKWqPkvg5-3hbUIgOE8TTbWmqhDqn2caWd-8Phn2WFjmA5amaIB6pz0PfutM4eTs6PAoNrk7GIdGxaXoyRHE1hubrohDNlkIp6wFD3OMxquc5CmURwnVJUCB-thZCe9EnuBMscmgCFpgP2zLs0vxssg5tBKMMtoj9WaCJv0QOX9aMCqMRDIxd5KpVmTZT1zY0pts8dEcmeSozq6tDszOvb2zvobP7J-xGK03BUdqXo5Z-3VAuH0wu8be8JRe0s8WbQVbSGequG927w-BOadcZkkmLyhPBLdrIBP7slQkIZXWb-TORv5cAAz5PpKTPtv7w1JtGrnLurxAlXx-4Vx2UYb6tTEofXIV9jNB1a-M7i24FgPX8p0pYJ9DxV1FE3U6vvei1B7BfDwZ042tvXk-pVQ")
 PORT = int(os.getenv("PORT", 4000))
 
 # Инициализация клиентов
@@ -1408,6 +1418,9 @@ async def start_socketio_donation_listener():
 
         except Exception as e:
             logger.error(f"❌ Ошибка обработки доната через socket.io: {e}")
+@sio.on("*")
+async def catch_all(event, data):
+    logger.info(f"📩 [DEBUG] Caught event: {event} | data: {data}")
 
     try:
         await sio.connect("https://socket.donationalerts.ru", transports=['websocket'])
