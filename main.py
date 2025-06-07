@@ -7,6 +7,7 @@ import sys
 import time
 import json
 import websockets
+import socketio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -148,6 +149,48 @@ class BaserowAPI:
             return False
 
 baserow = BaserowAPI()
+
+async def cleanup_resources():
+    """Закрытие всех ресурсов и соединений"""
+    logger.info("Cleaning up resources...")
+    
+    # Закрытие сессий aiohttp
+    if 'session' in globals():
+        await session.close()
+    
+    # Закрытие соединения с ботом
+    await bot.session.close()
+    
+    # Закрытие соединения с Supabase
+    if supabase:
+        await supabase.postgrest.aclose()
+    
+    logger.info("All resources cleaned up")
+
+async def on_shutdown():
+    """Обработчик завершения работы"""
+    try:
+        logger.info("Shutting down...")
+        
+        # Отмена всех pending задач
+        tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        
+        # Ожидание завершения задач
+        await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Удаление вебхука
+        await bot.delete_webhook()
+        logger.info("Webhook removed")
+        
+        # Очистка ресурсов
+        await cleanup_resources()
+        
+    except Exception as e:
+        logger.error(f"Error during shutdown: {e}")
+    finally:
+        logger.info("Bot successfully shut down")
 
 async def donation_socket_listener():
     """WebSocket клиент для получения донатов в реальном времени"""
@@ -902,7 +945,7 @@ async def show_payment_methods(callback_query: types.CallbackQuery):
                 InlineKeyboardButton(
                     text="💳 Оплатить произвольную сумму", 
                     url=make_donation_link(user, 1, False)
-                )  # <-- Добавлена закрывающая скобка
+                )
             ],
             [
                 InlineKeyboardButton(
@@ -1215,11 +1258,6 @@ async def start_web_server():
     await site.start()
     logger.info(f"Web server started on port {PORT}")
     
-async def on_shutdown():
-    logger.info("Shutting down...")
-    await bot.delete_webhook()
-    logger.info("Webhook removed")
-
 async def check_donations_loop():
     logger.info("🔄 Запуск задачи проверки донатов через API DonationAlerts")
     last_donation_ids = set()
@@ -1306,58 +1344,8 @@ async def check_donations_loop():
 
         await asyncio.sleep(60)
 
-async def main():
-    try:
-        logger.info("Starting bot...")
-        
-        app = setup_web_server()
-        runner = web.AppRunner(app)
-        await runner.setup()
-        
-        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
-        await bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-        )
-        logger.info(f"Webhook set to: {webhook_url}")
-        
-        site = web.TCPSite(runner, '0.0.0.0', PORT)
-        await site.start()
-        logger.info(f"Web server started on port {PORT}")
-        
-        asyncio.create_task(check_results())
-        asyncio.create_task(check_donations_loop())
-        asyncio.create_task(start_socketio_donation_listener())
-
-
-        while True:
-            await asyncio.sleep(3600)
-            
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
-
-if __name__ == "__main__":
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
-
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by keyboard interrupt")
-
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-
-    finally:
-        loop.run_until_complete(on_shutdown())
-        loop.close()
-        logger.info("Bot successfully shut down")
-
-
 async def start_socketio_donation_listener():
     sio = socketio.AsyncClient()
-    ...
     token = DONATION_ALERTS_TOKEN
 
     @sio.event
@@ -1436,3 +1424,55 @@ async def start_socketio_donation_listener():
         await sio.wait()
     except Exception as e:
         logger.error(f"❌ Ошибка подключения к socket.io DonationAlerts: {e}")
+
+async def main():
+    try:
+        logger.info("Starting bot...")
+        
+        # Создаем список задач для корректного завершения
+        tasks = [
+            asyncio.create_task(check_results()),
+            asyncio.create_task(check_donations_loop()),
+            asyncio.create_task(start_socketio_donation_listener())
+        ]
+        
+        app = setup_web_server()
+        runner = web.AppRunner(app)
+        await runner.setup()
+        
+        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+        )
+        logger.info(f"Webhook set to: {webhook_url}")
+        
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+        logger.info(f"Web server started on port {PORT}")
+        
+        # Ожидаем завершения всех задач
+        await asyncio.gather(*tasks)
+        
+    except asyncio.CancelledError:
+        logger.info("Received cancel signal")
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
+
+if __name__ == "__main__":
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
+
+    except KeyboardInterrupt:
+        logger.info("Bot stopped by keyboard interrupt")
+
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+
+    finally:
+        loop.run_until_complete(on_shutdown())
+        loop.close()
+        logger.info("Bot successfully shut down")
