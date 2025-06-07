@@ -1,23 +1,4 @@
-import os
-import logging
-import asyncio
-import aiohttp
-import shutil
-import sys
-import time
-import json
-import websockets
-import socketio
-from aiohttp import web
-from aiogram import Bot, Dispatcher, F, types
-from aiogram.filters import Command
-from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import (
-    Message,
-    InlineKeyboardMarkup,
-    InlineKeyboardButton,
-    FSInputFile,
-    InputMediaPhoto
+
 )
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
@@ -25,19 +6,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 
 # Загрузка переменных окружения
-load_dotenv()
-
-# Настройка логирования
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
-    handlers=[
-        logging.FileHandler("bot.log"),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
-
+load_
 # Конфигурация
 CUSTOM_PAYMENT_BTN_TEXT = "💳 Оплатить произвольную сумму"
 MIN_PAYMENT_AMOUNT = 1
