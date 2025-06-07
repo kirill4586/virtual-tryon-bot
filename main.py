@@ -3,7 +3,11 @@ import logging
 import asyncio
 import aiohttp
 import shutil
+import sys
 import time
+import json
+import websockets
+import socketio
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.filters import Command
@@ -60,6 +64,9 @@ bot = Bot(
 )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Инициализация Socket.IO клиента
+sio = socketio.AsyncClient()
 
 # Инициализация Supabase
 try:
@@ -142,6 +149,25 @@ class BaserowAPI:
             logger.error(f"Error resetting flags: {e}")
             return False
 
+    async def check_payment_confirmation(self, user_id: int):
+        """Проверяет, подтверждена ли оплата администратором"""
+        try:
+            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=self.headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Baserow GET error: {resp.status}")
+                        return False
+                    rows = await resp.json()
+                    
+                if rows.get("results"):
+                    row = rows["results"][0]
+                    return row.get("payment_confirmed") == True and row.get("tries_left", 0) > 0
+        except Exception as e:
+            logger.error(f"Error checking payment confirmation: {e}")
+            return False
+
 baserow = BaserowAPI()
 
 async def cleanup_resources():
@@ -186,7 +212,7 @@ async def on_shutdown():
     finally:
         logger.info("Bot successfully shut down")
 
-def make_donation_link(user: types.User, amount: int = 10) -> str:
+def make_donation_link(user: types.User, amount: int = 1) -> str:
     """Генерация ссылки на оплату"""
     username = f"@{user.username}" if user.username else f"TelegramID_{user.id}"
     message = username.replace(" ", "_")
@@ -264,7 +290,7 @@ async def is_processing(user_id: int) -> bool:
     ]
     model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
     
-    return (len(photos) >= 2 or (len(photos) >= 1 and model_selected)
+    return (len(photos) >= 2 or (len(photos) >= 1 and model_selected))
 
 async def send_initial_examples(chat_id: int):
     """Отправка примеров работ"""
@@ -330,7 +356,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
     except Exception as e:
         logger.error(f"Welcome error for {user_id}: {e}")
 
-@dp.message(Command("start")
+@dp.message(Command("start"))
 @dp.message(F.text & ~F.text.regexp(r'^\d+$'))
 async def handle_start(message: types.Message):
     """Обработчик команды /start"""
@@ -367,7 +393,7 @@ async def choose_model(callback_query: types.CallbackQuery):
         logger.error(f"Error in choose_model: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
-@dp.callback_query(F.data.startswith("view_examples_")
+@dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -836,17 +862,9 @@ async def main():
 
 if __name__ == "__main__":
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
-
-    except KeyboardInterrupt:
-        logger.info("Bot stopped by keyboard interrupt")
-
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-
-    finally:
-        loop.run_until_complete(on_shutdown())
-        loop.close()
-        logger.info("Bot successfully shut down")
+        loop = asyncio.new_event_loop
+		
+		
+		
+		
+		
