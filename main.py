@@ -36,9 +36,6 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("BOT_TOKEN is not set in environment variables")
-
 BASEROW_TOKEN = os.getenv("BASEROW_TOKEN")
 TABLE_ID = int(os.getenv("TABLE_ID"))
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
@@ -55,16 +52,17 @@ EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN")
 PORT = int(os.getenv("PORT", 4000))
+WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN", "your-domain.com")  # Добавлено для webhook
 
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Инициализация Supabase
+supabase = None
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logger.info("Supabase client initialized successfully")
@@ -803,49 +801,36 @@ async def start_web_server():
     logger.info(f"Web server started on port {PORT}")
     
 async def main():
+    """Основная функция запуска бота"""
     try:
         logger.info("Starting bot...")
         
-        # Удаляем предыдущий вебхук (если есть)
-        await bot.delete_webhook()
-        
-        # Устанавливаем новый вебхук
-        webhook_url = f"https://{YOUR_RENDER_SERVICE_NAME}.onrender.com/{BOT_TOKEN.split(':')[1]}"
-        
-        logger.info(f"Setting webhook to: {webhook_url}")
-        
-        await bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-            allowed_updates=dp.resolve_used_update_types()
-        )
-        
-        # Проверяем информацию о вебхуке
-        webhook_info = await bot.get_webhook_info()
-        logger.info(f"Webhook info: {webhook_info}")
-        
-        if not webhook_info.url:
-            logger.error("Webhook was not set!")
-            return
-            
-        # Запускаем фоновые задачи
+        # Создаем список задач для корректного завершения
         tasks = [
             asyncio.create_task(check_results()),
             asyncio.create_task(check_payment_confirmations())
         ]
         
-        # Запускаем веб-сервер
         app = setup_web_server()
         runner = web.AppRunner(app)
         await runner.setup()
+        
+        webhook_url = f"https://{WEBHOOK_DOMAIN}/{BOT_TOKEN.split(':')[1]}"
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+        )
+        logger.info(f"Webhook set to: {webhook_url}")
+        
         site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
         logger.info(f"Web server started on port {PORT}")
         
-        # Бесконечный цикл
-        while True:
-            await asyncio.sleep(3600)  # Проверяем каждые 60 минут
-            
+        # Ожидаем завершения всех задач
+        await asyncio.gather(*tasks)
+        
+    except asyncio.CancelledError:
+        logger.info("Received cancel signal")
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
