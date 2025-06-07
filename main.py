@@ -344,7 +344,7 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "choose_model"))
+@dp.callback_query(F.data == "choose_model")
 async def choose_model(callback_query: types.CallbackQuery):
     """Выбор модели"""
     if await is_processing(callback_query.from_user.id):
@@ -463,7 +463,7 @@ async def show_payment_options(user: types.User):
         }
     )
 
-@dp.callback_query(F.data == "payment_options"))
+@dp.callback_query(F.data == "payment_options")
 async def payment_options(callback_query: types.CallbackQuery):
     """Показывает детали оплаты и кнопки"""
     user = callback_query.from_user
@@ -496,7 +496,7 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
-@dp.callback_query(F.data == "confirm_donation"))
+@dp.callback_query(F.data == "confirm_donation")
 async def confirm_donation(callback_query: types.CallbackQuery):
     """Подтверждение оплаты пользователем"""
     user = callback_query.from_user
@@ -850,4 +850,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-        
