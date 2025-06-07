@@ -52,9 +52,7 @@ EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN")
 PORT = int(os.getenv("PORT", 4000))
-WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN", "your-domain.com")  # Добавлено для webhook
 
-# Инициализация клиентов
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
@@ -64,7 +62,6 @@ dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 # Инициализация Supabase
-supabase = None
 try:
     supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
     logger.info("Supabase client initialized successfully")
@@ -267,7 +264,7 @@ async def is_processing(user_id: int) -> bool:
     ]
     model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
     
-    return len(photos) >= 2 or (len(photos) >= 1 and model_selected)
+    return (len(photos) >= 2 or (len(photos) >= 1 and model_selected)
 
 async def send_initial_examples(chat_id: int):
     """Отправка примеров работ"""
@@ -333,7 +330,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
     except Exception as e:
         logger.error(f"Welcome error for {user_id}: {e}")
 
-@dp.message(Command("start"))
+@dp.message(Command("start")
 @dp.message(F.text & ~F.text.regexp(r'^\d+$'))
 async def handle_start(message: types.Message):
     """Обработчик команды /start"""
@@ -370,7 +367,7 @@ async def choose_model(callback_query: types.CallbackQuery):
         logger.error(f"Error in choose_model: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
-@dp.callback_query(F.data.startswith("view_examples_"))
+@dp.callback_query(F.data.startswith("view_examples_")
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -817,7 +814,7 @@ async def main():
         runner = web.AppRunner(app)
         await runner.setup()
         
-        webhook_url = f"https://{WEBHOOK_DOMAIN}/{BOT_TOKEN.split(':')[1]}"
+        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
             drop_pending_updates=True,
