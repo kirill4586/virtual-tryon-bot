@@ -4,4 +4,4 @@ requests
 httpx
 aiogram==3.5.0
 supabase
-python-socketio>=5.0.0
+python-socketio[asyncio_client]
