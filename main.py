@@ -55,9 +55,11 @@ PORT = int(os.getenv("PORT", 4000))
 WEBHOOK_DOMAIN = os.getenv("WEBHOOK_DOMAIN", "your-domain.com")  # Добавлено для webhook
 
 # Инициализация клиентов
+# Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
