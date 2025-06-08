@@ -498,7 +498,7 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "choose_model"))
+@dp.callback_query(F.data == "choose_model")
 async def choose_model(callback_query: types.CallbackQuery):
     """Выбор модели"""
     if await is_processing(callback_query.from_user.id):
@@ -521,7 +521,7 @@ async def choose_model(callback_query: types.CallbackQuery):
         logger.error(f"Error in choose_model: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
-@dp.callback_query(F.data.startswith("models_")))
+@dp.callback_query(F.data.startswith("models_"))
 async def handle_models_category(callback_query: types.CallbackQuery):
     """Обработчик выбора категории моделей"""
     try:
@@ -536,7 +536,7 @@ async def handle_models_category(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data.startswith("select_model_")))
+@dp.callback_query(F.data.startswith("select_model_"))
 async def select_model(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     try:
@@ -603,7 +603,7 @@ async def select_model(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при выборе модели. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data.startswith("view_examples_")))
+@dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -615,7 +615,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu"))
+@dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -698,7 +698,7 @@ async def show_payment_options(user: types.User):
         }
     )
 
-@dp.callback_query(F.data == "payment_options"))
+@dp.callback_query(F.data == "payment_options")
 async def payment_options(callback_query: types.CallbackQuery):
     """Показывает детали оплаты и кнопки"""
     user = callback_query.from_user
@@ -731,7 +731,7 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
-@dp.callback_query(F.data == "confirm_donation"))
+@dp.callback_query(F.data == "confirm_donation")
 async def confirm_donation(callback_query: types.CallbackQuery):
     """Подтверждение оплаты пользователем"""
     user = callback_query.from_user
