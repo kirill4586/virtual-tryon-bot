@@ -1085,7 +1085,69 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-# Остальной код остается без изменений (check_results, handle, health_check, setup_web_server, webhook_handler, start_web_server, main)
+async def check_results():
+    """Проверяет результаты обработки и отправляет их пользователям"""
+    while True:
+        try:
+            # Здесь должна быть логика проверки результатов обработки
+            await asyncio.sleep(10)
+        except Exception as e:
+            logger.error(f"Error in check_results: {e}")
+            await asyncio.sleep(30)
+
+async def handle():
+    """Основная функция обработки"""
+    try:
+        await dp.start_polling(bot)
+    except Exception as e:
+        logger.error(f"Error in handle: {e}")
+    finally:
+        await on_shutdown()
+
+async def health_check(request):
+    """Проверка здоровья сервера"""
+    return web.Response(text="OK")
+
+async def setup_web_server():
+    """Настройка веб-сервера"""
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    return app
+
+async def webhook_handler(request):
+    """Обработчик вебхуков"""
+    try:
+        data = await request.json()
+        logger.info(f"Webhook received: {data}")
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.error(f"Error in webhook_handler: {e}")
+        return web.Response(status=400)
+
+async def start_web_server():
+    """Запуск веб-сервера"""
+    app = await setup_web_server()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
+
+async def main():
+    """Основная функция"""
+    try:
+        # Запускаем веб-сервер в фоне
+        asyncio.create_task(start_web_server())
+        
+        # Запускаем проверку результатов в фоне
+        asyncio.create_task(check_results())
+        
+        # Запускаем бота
+        await handle()
+        
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
 
 if __name__ == "__main__":
     try:
