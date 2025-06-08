@@ -53,6 +53,12 @@ MODELS_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN")
 PORT = int(os.getenv("PORT", 4000))
 
+# Названия полей в Baserow
+ACCESS_FIELD = "access_granted"  # Поле с галочкой доступа
+AMOUNT_FIELD = "payment_amount"  # Поле с суммой оплаты
+TRIES_FIELD = "tries_left"       # Поле с количеством примерок
+STATUS_FIELD = "status"          # Поле со статусом
+
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
@@ -87,57 +93,124 @@ class BaserowAPI:
             "Content-Type": "application/json"
         }
 
-    async def upsert_row(self, user_id: int, username: str, data: dict):
+    async def get_user_row(self, user_id: int):
+        """Получение строки пользователя"""
         try:
             url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-            
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=self.headers) as resp:
                     if resp.status != 200:
                         logger.error(f"Baserow GET error: {resp.status}")
                         return None
                     rows = await resp.json()
-                    
-                base_data = {
+                    return rows.get("results", [None])[0] if rows.get("results") else None
+        except Exception as e:
+            logger.error(f"Error getting user row: {e}")
+            return None
+
+    async def update_user_row(self, row_id: int, data: dict):
+        """Обновление строки пользователя"""
+        try:
+            url = f"{self.base_url}/{row_id}/?user_field_names=true"
+            async with aiohttp.ClientSession() as session:
+                async with session.patch(url, headers=self.headers, json=data) as resp:
+                    return await resp.json() if resp.status == 200 else None
+        except Exception as e:
+            logger.error(f"Error updating user row: {e}")
+            return None
+
+    async def check_and_update_access(self, user_id: int):
+        """
+        Проверяет доступ пользователя и обновляет количество примерок.
+        Возвращает количество доступных примерок или None при ошибке.
+        """
+        try:
+            row = await self.get_user_row(user_id)
+            if not row:
+                return 0
+
+            # Если доступ не предоставлен
+            if not row.get(ACCESS_FIELD, False):
+                return 0
+
+            tries_left = int(row.get(TRIES_FIELD, 0))
+            amount = float(row.get(AMOUNT_FIELD, 0))
+
+            # Если примерки закончились, снимаем доступ
+            if tries_left <= 0:
+                await self.update_user_row(row["id"], {
+                    ACCESS_FIELD: False,
+                    STATUS_FIELD: "Не оплачено"
+                })
+                return 0
+
+            return tries_left
+
+        except Exception as e:
+            logger.error(f"Error in check_and_update_access: {e}")
+            return None
+
+    async def decrement_tries(self, user_id: int):
+        """Уменьшает количество примерок на 1 и вычитает стоимость из суммы"""
+        try:
+            row = await self.get_user_row(user_id)
+            if not row:
+                return False
+
+            tries_left = int(row.get(TRIES_FIELD, 0))
+            amount = float(row.get(AMOUNT_FIELD, 0))
+
+            # Обновляем значения
+            new_tries = max(0, tries_left - 1)
+            new_amount = max(0, amount - PRICE_PER_TRY)
+
+            update_data = {
+                TRIES_FIELD: new_tries,
+                AMOUNT_FIELD: new_amount,
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            # Если примерки закончились, снимаем доступ
+            if new_tries <= 0:
+                update_data[ACCESS_FIELD] = False
+                update_data[STATUS_FIELD] = "Не оплачено"
+
+            return await self.update_user_row(row["id"], update_data) is not None
+
+        except Exception as e:
+            logger.error(f"Error decrementing tries: {e}")
+            return False
+
+    async def upsert_row(self, user_id: int, username: str, data: dict):
+        """Создает или обновляет запись пользователя"""
+        try:
+            row = await self.get_user_row(user_id)
+            if row:
+                return await self.update_user_row(row["id"], data)
+            else:
+                url = f"{self.base_url}/?user_field_names=true"
+                data.update({
                     "user_id": str(user_id),
                     "username": username or ""
-                }
-                    
-                if rows.get("results"):
-                    row_id = rows["results"][0]["id"]
-                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
-                    async with session.patch(update_url, headers=self.headers, json={**base_data, **data}) as resp:
-                        return await resp.json()
-                else:
-                    async with session.post(f"{self.base_url}/?user_field_names=true", 
-                                         headers=self.headers, 
-                                         json={**base_data, **data}) as resp:
-                        return await resp.json()
+                })
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(url, headers=self.headers, json=data) as resp:
+                        return await resp.json() if resp.status == 200 else None
         except Exception as e:
-            logger.error(f"Baserow API exception: {e}")
+            logger.error(f"Error in upsert_row: {e}")
             return None
 
     async def reset_flags(self, user_id: int):
+        """Сбрасывает флаги обработки для пользователя"""
         try:
-            url = f"{self.base_url}/?user_field_names=true&filter__user_id__equal={user_id}"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self.headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Baserow GET error: {resp.status}")
-                        return False
-                    rows = await resp.json()
-                    
-                if rows.get("results"):
-                    row_id = rows["results"][0]["id"]
-                    update_url = f"{self.base_url}/{row_id}/?user_field_names=true"
-                    reset_data = {
-                        "photo1_received": False,
-                        "photo2_received": False,
-                        "ready": False
-                    }
-                    async with session.patch(update_url, headers=self.headers, json=reset_data) as resp:
-                        return resp.status == 200
+            row = await self.get_user_row(user_id)
+            if row:
+                return await self.update_user_row(row["id"], {
+                    "photo1_received": False,
+                    "photo2_received": False,
+                    "ready": False
+                }) is not None
+            return False
         except Exception as e:
             logger.error(f"Error resetting flags: {e}")
             return False
@@ -214,43 +287,12 @@ async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
         return False
 
 async def get_user_tries(user_id: int) -> int:
-    """Получение количества оставшихся примерок у пользователя"""
-    try:
-        url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/?user_field_names=true&filter__user_id__equal={user_id}"
-        headers = {
-            "Authorization": f"Token {BASEROW_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    rows = await resp.json()
-                    if rows.get("results"):
-                        return rows["results"][0].get("tries_left", 0)
-    except Exception as e:
-        logger.error(f"Error getting user tries: {e}")
-    return 0
+    """Получение количества оставшихся примерок у пользователя с проверкой доступа"""
+    if user_id in FREE_USERS:
+        return 100  # Большое число для бесплатных пользователей
 
-async def update_user_tries(user_id: int, tries: int):
-    """Обновление количества оставшихся примерок"""
-    try:
-        url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/?user_field_names=true&filter__user_id__equal={user_id}"
-        headers = {
-            "Authorization": f"Token {BASEROW_TOKEN}",
-            "Content-Type": "application/json"
-        }
-        
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url, headers=headers) as resp:
-                if resp.status == 200:
-                    rows = await resp.json()
-                    if rows.get("results"):
-                        row_id = rows["results"][0]["id"]
-                        update_url = f"https://api.baserow.io/api/database/rows/table/{TABLE_ID}/{row_id}/?user_field_names=true"
-                        await session.patch(update_url, headers=headers, json={"tries_left": tries})
-    except Exception as e:
-        logger.error(f"Error updating user tries: {e}")
+    tries = await baserow.check_and_update_access(user_id)
+    return tries if tries is not None else 0
 
 async def is_processing(user_id: int) -> bool:
     """Проверка, идет ли обработка для пользователя"""
@@ -525,7 +567,7 @@ async def confirm_donation(callback_query: types.CallbackQuery):
     )
 
 async def process_photo(message: types.Message, user: types.User, user_dir: str):
-    """Обработка загруженных фотографий"""
+    """Обработка загруженных фотографий с учетом списания примерок"""
     try:
         existing_photos = [
             f for f in os.listdir(user_dir)
@@ -551,9 +593,9 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             
             await upload_to_supabase(file_path, user.id, "photos")
             
-            tries_left = await get_user_tries(user.id)
-            if tries_left > 0:
-                await update_user_tries(user.id, tries_left - 1)
+            # Списание одной примерки
+            if user.id not in FREE_USERS:
+                await baserow.decrement_tries(user.id)
             
             await baserow.upsert_row(user.id, user.username, {
                 "photo_person": True,
@@ -602,50 +644,55 @@ async def check_payment_confirmations():
     logger.info("🔄 Starting payment confirmation check loop...")
     while True:
         try:
-            # Получаем список пользователей, ожидающих подтверждения оплаты
-            url = f"{baserow.base_url}/?user_field_names=true&filter__payment_requested__equal=true&filter__payment_confirmed__equal=false"
+            # Получаем список пользователей с положительной суммой оплаты
+            url = f"{baserow.base_url}/?user_field_names=true&filter__{AMOUNT_FIELD}__greater_than=0"
             headers = baserow.headers
             
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers) as resp:
                     if resp.status != 200:
-                        logger.error(f"Error getting pending payments: {resp.status}")
+                        logger.error(f"Error getting payments: {resp.status}")
                         await asyncio.sleep(60)
                         continue
                     
                     rows = await resp.json()
                     
                     if not rows.get("results"):
-                        logger.info("ℹ️ No pending payments found")
+                        logger.info("ℹ️ No payments found")
                         await asyncio.sleep(60)
                         continue
                     
                     for row in rows["results"]:
                         user_id = int(row["user_id"])
                         username = row["username"]
-                        tries_added = row.get("tries_left", 0)
+                        amount = float(row.get(AMOUNT_FIELD, 0))
+                        access_granted = row.get(ACCESS_FIELD, False)
+                        tries_left = int(row.get(TRIES_FIELD, 0))
                         
-                        if tries_added > 0 and row.get("payment_confirmed") == True:
-                            # Отправляем уведомление пользователю
+                        # Если доступ еще не предоставлен, но сумма есть
+                        if amount > 0 and not access_granted:
+                            # Рассчитываем количество примерок
+                            new_tries = int(amount / PRICE_PER_TRY)
+                            
+                            # Обновляем запись
+                            update_url = f"{baserow.base_url}/{row['id']}/?user_field_names=true"
+                            await session.patch(update_url, headers=headers, json={
+                                ACCESS_FIELD: True,
+                                TRIES_FIELD: new_tries,
+                                STATUS_FIELD: "Оплачено",
+                                "payment_confirmed": True,
+                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                            })
+                            
+                            # Уведомляем пользователя
                             try:
                                 await bot.send_message(
                                     user_id,
                                     f"✅ Ваш платёж подтверждён!\n\n"
-                                    f"Вам доступно {tries_added} примерок.\n"
+                                    f"Вам доступно {new_tries} примерок.\n"
                                     f"Теперь вы можете продолжить работу с ботом."
                                 )
-                                
-                                # Обновляем статус в Baserow
-                                update_url = f"{baserow.base_url}/{row['id']}/?user_field_names=true"
-                                await session.patch(update_url, headers=headers, json={
-                                    "payment_status": "Оплачено и подтверждено",
-                                    "status": "Активен",
-                                    "payment_confirmed": True,
-                                    "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                                })
-                                
-                                logger.info(f"💰 Payment confirmed for {username} ({user_id}), {tries_added} tries added")
-                                
+                                logger.info(f"💰 Payment confirmed for {username} ({user_id}), {new_tries} tries added")
                             except Exception as e:
                                 logger.error(f"Error notifying user {username} ({user_id}): {e}")
                                 continue
@@ -820,33 +867,43 @@ async def main():
             drop_pending_updates=True,
         )
         logger.info(f"Webhook set to: {webhook_url}")
-        
+
         site = web.TCPSite(runner, '0.0.0.0', PORT)
         await site.start()
-        logger.info(f"Web server started on port {PORT}")
-        
-        # Ожидаем завершения всех задач
-        await asyncio.gather(*tasks)
-        
+        logger.info(f"Server started on port {PORT}")
+
+        # Запуск фоновых задач
+        background_tasks = asyncio.gather(
+            check_payment_confirmations(),
+            check_results(),
+            return_exceptions=True
+        )
+
+        # Уведомление администратора о запуске
+        await notify_admin("🟢 Бот запущен и готов к работе")
+
+        # Бесконечный цикл работы бота
+        await asyncio.Event().wait()
+
     except asyncio.CancelledError:
-        logger.info("Received cancel signal")
+        logger.info("Received cancel signal, shutting down...")
     except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
+        logger.error(f"Fatal error: {e}")
+    finally:
+        # Отмена фоновых задач
+        background_tasks.cancel()
+        try:
+            await background_tasks
+        except asyncio.CancelledError:
+            pass
+
+        # Удаление вебхука и очистка
+        await bot.delete_webhook()
+        await cleanup_resources()
+        logger.info("Bot shutdown complete")
 
 if __name__ == "__main__":
     try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(main())
-
+        asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Bot stopped by keyboard interrupt")
-
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-
-    finally:
-        loop.run_until_complete(on_shutdown())
-        loop.close()
-        logger.info("Bot successfully shut down")
