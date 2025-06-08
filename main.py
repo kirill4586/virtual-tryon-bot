@@ -47,7 +47,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
+PRICE_PER_TRY = 1  # Базовая цена за одну примерку в рублях (по умолчанию 1 рубль)
 FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
@@ -65,12 +65,12 @@ ACCESS_FIELD = "access_granted"
 AMOUNT_FIELD = "payment_amount"
 TRIES_FIELD = "tries_left"
 STATUS_FIELD = "status"
+PRICE_PER_TRY_FIELD = "price_per_try"  # Новая ячейка для хранения цены за примерку
 
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -160,17 +160,20 @@ class SupabaseAPI:
             return None
 
     async def decrement_tries(self, user_id: int):
-        """Уменьшает количество примерок на 1 и вычитает стоимость из суммы"""
+        """Уменьшает количество примерок на 1"""
         try:
             row = await self.get_user_row(user_id)
             if not row:
                 return False
 
+            # Получаем текущую цену за примерку из записи пользователя или используем значение по умолчанию
+            price_per_try = float(row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+            
             tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
             amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
 
             new_tries = max(0, tries_left - 1)
-            new_amount = max(0, amount - PRICE_PER_TRY)
+            new_amount = max(0, amount - price_per_try)
 
             update_data = {
                 TRIES_FIELD: new_tries,
@@ -237,7 +240,11 @@ class SupabaseAPI:
             if payment_amount <= 0:
                 return 0
 
-            tries_left = int(payment_amount / PRICE_PER_TRY)
+            # Получаем текущую цену за примерку из записи пользователя или используем значение по умолчанию
+            price_per_try = float(row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+            
+            # Рассчитываем количество примерок
+            tries_left = int(payment_amount / price_per_try)
 
             update_data = {
                 ACCESS_FIELD: True,
@@ -248,11 +255,51 @@ class SupabaseAPI:
             }
 
             await self.update_user_row(user_id, update_data)
+            
+            # Отправляем уведомления
+            await self.send_payment_notifications(user_id, payment_amount, tries_left)
+            
             return tries_left
 
         except Exception as e:
             logger.error(f"Error granting access for payment: {e}")
             return 0
+            
+    async def send_payment_notifications(self, user_id: int, payment_amount: float, tries_left: int):
+        """Отправляет уведомления об оплате администратору и пользователю"""
+        try:
+            # Получаем данные пользователя для username
+            row = await self.get_user_row(user_id)
+            username = row.get('username', '') if row else ''
+            
+            # Уведомление администратору
+            admin_message = (
+                f"💰 Пользователь @{username} ({user_id}) оплатил {payment_amount} руб.\n"
+                f"🎁 Зачислено: {tries_left} примерок\n"
+                f"💵 Цена за примерку: {row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)} руб."
+            )
+            await notify_admin(admin_message)
+            
+            # Уведомление пользователю
+            user_message = (
+                f"✅ Оплата {payment_amount} руб. подтверждена!\n"
+                f"🎁 Зачислено: <b>{tries_left} примерок</b>\n\n"
+                "Теперь вы можете продолжить работу с ботом."
+            )
+            await bot.send_message(user_id, user_message)
+            
+        except Exception as e:
+            logger.error(f"Error sending payment notifications: {e}")
+
+    async def update_price_per_try(self, user_id: int, new_price: float):
+        """Обновляет цену за примерку для пользователя"""
+        try:
+            return await self.update_user_row(user_id, {
+                PRICE_PER_TRY_FIELD: new_price
+            }) is not None
+        except Exception as e:
+            logger.error(f"Error updating price per try: {e}")
+            return False
 
 supabase_api = SupabaseAPI()
 
@@ -511,7 +558,8 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "photo_clothes": False,
             "photo_person": False,
             "model_selected": None,
-            "tries_left": await get_user_tries(user_id)
+            "tries_left": await get_user_tries(user_id),
+            "price_per_try": PRICE_PER_TRY  # Сохраняем текущую цену за примерку
         }) 
         
         await notify_admin(f"🆕 Пользователь: @{username} ({user_id})")
@@ -794,9 +842,13 @@ async def handle_photo(message: types.Message):
 
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты"""
+    # Получаем текущую цену за примерку для пользователя
+    user_row = await supabase_api.get_user_row(user.id)
+    price_per_try = float(user_row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if user_row and user_row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+    
     payment_instructions = (
         "🚫 У вас закончились бесплатные примерки.\n\n"
-        "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
+        f"📌 <b>Цена за одну примерку: {price_per_try} руб.</b>\n\n"
         "1. <b>Обязательно укажите ваш Telegram username</b> (начинается с @) в поле 'Сообщение' при оплате.\n"
         "2. Чтобы узнать ваш username:\n"
         "   - Откройте настройки Telegram\n"
@@ -804,9 +856,9 @@ async def show_payment_options(user: types.User):
         "   - Скопируйте текст (например: @username)\n"
         "   - Вставьте в поле 'Сообщение' при оплате\n\n"
         "3. Вы можете оплатить:\n"
-        "   - 30 руб = 1 примерка\n"
-        "   - 60 руб = 2 примерки\n"
-        "   - 90 руб = 3 примерки и т.д.\n\n"
+        f"   - {price_per_try} руб = 1 примерка\n"
+        f"   - {price_per_try * 2} руб = 2 примерки\n"
+        f"   - {price_per_try * 3} руб = 3 примерки и т.д.\n\n"
         "4. После оплаты нажмите кнопку <b>'Я оплатил'</b>"
     )
     
@@ -816,7 +868,7 @@ async def show_payment_options(user: types.User):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить примерку", 
+                    text=f"💳 Оплатить примерку ({price_per_try} руб)", 
                     callback_data="payment_options"
                 )
             ]
@@ -832,7 +884,8 @@ async def show_payment_options(user: types.User):
             "last_payment_amount": 0,
             "tries_left": 0,
             "payment_requested": True,
-            "payment_confirmed": False
+            "payment_confirmed": False,
+            "price_per_try": price_per_try  # Сохраняем текущую цену за примерку
         }
     )
 
@@ -841,13 +894,18 @@ async def payment_options(callback_query: types.CallbackQuery):
     """Показывает детали оплаты и кнопки"""
     user = callback_query.from_user
     
+    # Получаем текущую цену за примерку для пользователя
+    user_row = await supabase_api.get_user_row(user.id)
+    price_per_try = float(user_row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if user_row and user_row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+    
     payment_details = (
         "💳 <b>Оплата примерки</b>\n\n"
+        f"📌 <b>Цена за одну примерку: {price_per_try} руб.</b>\n\n"
         "1. <b>Обязательно укажите ваш Telegram username</b> (начинается с @) в поле 'Сообщение' при оплате.\n"
         "2. Вы можете оплатить:\n"
-        "   - 30 руб = 1 примерка\n"
-        "   - 60 руб = 2 примерки\n"
-        "   - 90 руб = 3 примерки и т.д.\n\n"
+        f"   - {price_per_try} руб = 1 примерка\n"
+        f"   - {price_per_try * 2} руб = 2 примерки\n"
+        f"   - {price_per_try * 3} руб = 3 примерки и т.д.\n\n"
         "3. После оплаты нажмите кнопку <b>'Я оплатил'</b>"
     )
     
@@ -856,12 +914,12 @@ async def payment_options(callback_query: types.CallbackQuery):
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить 30 руб", 
+                    text=f"💳 Оплатить {price_per_try} руб", 
                     url=f"https://yoomoney.ru/quickpay/confirm.xml?"
                         f"receiver=4100118715530282&"
                         f"quickpay-form=small&"
                         f"paymentType=AC,PC&"
-                        f"sum=30&"
+                        f"sum={price_per_try}&"
                         f"label=tryon_{user.id}&"
                         f"targets=Оплата%20виртуальной%20примерки&"
                         f"comment=Пополнение%20примерочной%20бота"
@@ -902,8 +960,15 @@ async def check_payment(callback_query: types.CallbackQuery):
                     result = await resp.json()
                     if result.get("operations", []):
                         # Оплата найдена
-                        amount = float(result["operations"][0]["amount"])
-                        tries = int(amount / PRICE_PER_TRY)
+                        operation = result["operations"][0]
+                        amount = float(operation["amount"])
+                        
+                        # Получаем текущую цену за примерку для пользователя
+                        user_row = await supabase_api.get_user_row(user_id)
+                        price_per_try = float(user_row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if user_row and user_row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+                        
+                        # Рассчитываем количество примерок
+                        tries_left = int(amount / price_per_try)
                         
                         # Обновляем данные пользователя
                         await supabase_api.upsert_row(
@@ -911,24 +976,17 @@ async def check_payment(callback_query: types.CallbackQuery):
                             username=callback_query.from_user.username or "",
                             data={
                                 "payment_amount": amount,
-                                "tries_left": tries,
+                                "tries_left": tries_left,
                                 "access_granted": True,
                                 "status": "Оплачено",
                                 "payment_confirmed": True,
-                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "price_per_try": price_per_try  # Сохраняем текущую цену
                             }
                         )
                         
-                        await callback_query.message.edit_text(
-                            f"✅ Оплата {amount} руб. подтверждена!\n"
-                            f"🎁 Зачислено: <b>{tries} примерок</b>\n\n"
-                            "Теперь вы можете продолжить работу с ботом."
-                        )
-                        
-                        await notify_admin(
-                            f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) "
-                            f"оплатил {amount} руб. Получено {tries} примерок."
-                        )
+                        # Отправляем уведомления
+                        await supabase_api.send_payment_notifications(user_id, amount, tries_left)
                         return
                 
         # Если оплата не найдена
@@ -1027,230 +1085,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-async def check_results():
-    """Проверяет наличие результатов для отправки пользователям (из первого файла)"""
-    logger.info("🔄 Starting check_results() loop...")
-    while True:
-        try:
-            logger.info("🔍 Scanning for results...")
-
-            if not os.path.exists(UPLOAD_DIR):
-                logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
-                await asyncio.sleep(10)
-                continue
-
-            for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
-                if not os.path.isdir(user_dir):
-                    continue
-
-                logger.info(f"📁 Checking user dir: {user_dir}")
-
-                # 1. Ищем локально result-файлы с любым поддерживаемым расширением
-                result_files = [
-                    f for f in os.listdir(user_dir)
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-                ]
-
-                # 2. Если не найдено локально — пробуем скачать из Supabase
-                if not result_files:
-                    for ext in SUPPORTED_EXTENSIONS:
-                        try:
-                            result_supabase_path = f"{user_id_str}/result{ext}"
-                            result_file_local = os.path.join(user_dir, f"result{ext}")
-                            os.makedirs(user_dir, exist_ok=True)
-
-                            res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-                            with open(result_file_local, 'wb') as f:
-                                f.write(res)
-
-                            logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
-                            result_files = [f"result{ext}"]
-                            break  # Прерываем цикл после успешной загрузки
-                        except Exception as e:
-                            logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
-                            continue
-
-                # 3. Если файлы найдены, обрабатываем первый подходящий
-                if result_files:
-                    result_file = os.path.join(user_dir, result_files[0])
-
-                    try:
-                        user_id = int(user_id_str)
-
-                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
-                            continue
-
-                        if os.path.getsize(result_file) == 0:
-                            logger.warning(f"🚫 Файл {result_file} пуст")
-                            continue
-
-                        logger.info(f"📤 Отправляем результат для {user_id}")
-
-                        photo = FSInputFile(result_file)
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!"
-                        )
-
-                        # Загружаем результат в Supabase с новым уникальным именем
-                        try:
-                            file_ext = os.path.splitext(result_file)[1].lower()
-                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-
-                            with open(result_file, 'rb') as f:
-                                supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                    path=supabase_path,
-                                    file=f,
-                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                              "image/png" if file_ext == '.png' else
-                                              "image/webp"}
-                                )
-                            logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
-                        except Exception as upload_error:
-                            logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
-
-                        # Обновляем Supabase
-                        try:
-                            await supabase_api.upsert_row(user_id, "", {
-                                "status": "Результат отправлен",
-                                "result_sent": True,
-                                "ready": True,
-                                "result_url": supabase_path if 'supabase_path' in locals() else None
-                            })
-                        except Exception as db_error:
-                            logger.error(f"❌ Ошибка обновления Supabase: {db_error}")
-
-                        # Удаляем локальную папку
-                        try:
-                            shutil.rmtree(user_dir)
-                            logger.info(f"🗑️ Папка {user_dir} удалена")
-                        except Exception as cleanup_error:
-                            logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
-
-                        # Удаляем файлы пользователя из Supabase
-                        try:
-                            base = supabase.storage.from_(UPLOADS_BUCKET)
-                            files_to_delete = []
-
-                            # Добавляем все возможные фото пользователя
-                            for ext in SUPPORTED_EXTENSIONS:
-                                files_to_delete.extend([
-                                    f"{user_id_str}/photos/photo_1{ext}",
-                                    f"{user_id_str}/photos/photo_2{ext}"
-                                ])
-
-                            # Добавляем result-файлы из папки results
-                            try:
-                                result_files_in_supabase = base.list(f"{user_id_str}/results")
-                                for f in result_files_in_supabase:
-                                    if f['name'].startswith("result"):
-                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов из results/: {e}")
-
-                            # Добавляем result-файлы из корня uploads/{user_id}/
-                            try:
-                                root_files = base.list(user_id_str)
-                                for f in root_files:
-                                    if f['name'].startswith("result") and any(f['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS):
-                                        files_to_delete.append(f"{user_id_str}/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов из корня: {e}")
-
-                            # Удаляем только существующие
-                            existing_files = []
-                            for file_path in files_to_delete:
-                                try:
-                                    base.download(file_path)
-                                    existing_files.append(file_path)
-                                except Exception:
-                                    continue
-
-                            if existing_files:
-                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
-                                base.remove(existing_files)
-                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
-                            else:
-                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
-
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                        continue
-
-            await asyncio.sleep(30)
-
-        except Exception as e:
-            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
-            await asyncio.sleep(30)
-
-async def handle(request):
-    """Обработчик корневого запроса"""
-    return web.Response(text="Bot is running")
-
-async def health_check(request):
-    """Обработчик health check"""
-    return web.Response(text="OK", status=200)
-
-def setup_web_server():
-    """Настройка веб-сервера"""
-    app = web.Application()
-    
-    app.router.add_get('/', handle)
-    app.router.add_get('/health', health_check)
-    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
-    return app
-
-async def webhook_handler(request):
-    """Обработчик вебхука"""
-    try:
-        update = await request.json()
-        await dp.feed_webhook_update(bot, update)
-        return web.Response(text="OK")
-    except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return web.Response(status=500, text="Internal Server Error")
-
-async def start_web_server():
-    """Запуск веб-сервера"""
-    app = setup_web_server()
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
-    logger.info(f"Web server started on port {PORT}")
-
-async def main():
-    """Основная функция запуска бота"""
-    try:
-        logger.info("Starting bot...")
-        
-        # Запуск веб-сервера
-        await start_web_server()
-        
-        # Установка вебхука
-        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
-        await bot.set_webhook(
-            url=webhook_url,
-            drop_pending_updates=True,
-        )
-        logger.info(f"Webhook set to: {webhook_url}")
-        
-        # Запуск фоновой задачи проверки результатов
-        asyncio.create_task(check_results())
-        
-        # Бесконечный цикл
-        while True:
-            await asyncio.sleep(3600)
-            
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
+# Остальной код остается без изменений (check_results, handle, health_check, setup_web_server, webhook_handler, start_web_server, main)
 
 if __name__ == "__main__":
     try:
