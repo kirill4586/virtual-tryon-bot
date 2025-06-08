@@ -918,4 +918,4 @@ if __name__ == "__main__":
         logger.error(f"Fatal error: {e}")
     finally:
         # Гарантированная очистка ресурсов
-        asyncio.run(cleanup_resources()
+        asyncio.run(cleanup_resources())  # Добавлена закрывающая скобка
