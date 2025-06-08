@@ -905,107 +905,97 @@ async def check_donation_alerts():
     while True:
         try:
             async with aiohttp.ClientSession() as session:
-                # Получаем последние донаты
                 url = "https://www.donationalerts.com/api/v1/alerts/donations"
                 params = {
                     "page": 1,
                     "per_page": 10
                 }
                 
-                try:
-                    async with session.get(url, headers=headers, params=params) as resp:
-                        if resp.status != 200:
-                            error_text = await resp.text()
-                            logger.error(f"DonationAlerts API error: {resp.status} - {error_text}")
-                            await asyncio.sleep(60)
-                            continue
-                            
-                        try:
-                            data = await resp.json()
-                        except Exception as json_error:
-                            logger.error(f"DonationAlerts JSON decode error: {json_error}")
-                            await asyncio.sleep(60)
-                            continue
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        error_text = await resp.text()
+                        logger.error(f"DonationAlerts API error: {resp.status} - {error_text}")
+                        await asyncio.sleep(60)
+                        continue
+                        
+                    data = await resp.json()
                     
-                    for donation in data.get("data", []):
-                        try:
-                            # Парсим сообщение для получения username
-                            message = donation.get("message", "").strip()
-                            if not message or not message.startswith("@"):
-                                continue
-                                
-                            username = message.split()[0]  # Берем первое слово как username
-                            amount = float(donation.get("amount", 0))
-                            currency = donation.get("currency", "RUB")
-                            
-                            if currency != "RUB":
-                                logger.warning(f"Unsupported currency: {currency}")
-                                continue
-                                
-                            if amount <= 0:
-                                continue
-                                
-                            # Ищем пользователя в Supabase по username
-                            res = supabase.table(USERS_TABLE)\
-                                .select("*")\
-                                .eq("username", username)\
-                                .execute()
-                                
-                            if not res.data:
-                                logger.warning(f"User {username} not found in database")
-                                continue
-                                
-                            user_data = res.data[0]
-                            user_id = int(user_data.get("user_id", 0))
-                            
-                            # Обновляем данные пользователя
-                            tries_left = int(amount / PRICE_PER_TRY)
-                            update_data = {
-                                AMOUNT_FIELD: amount,
-                                TRIES_FIELD: tries_left,
-                                ACCESS_FIELD: True,
-                                STATUS_FIELD: "Оплачено",
-                                "payment_confirmed": True,
-                                "payment_method": "DonationAlerts",
-                                "payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                            }
-                            
-                            await supabase_api.update_user_row(user_id, update_data)
-                            
-                            # Уведомляем пользователя
-                            try:
-                                await bot.send_message(
-                                    user_id,
-                                    f"✅ Ваш платёж подтверждён!\n\n"
-                                    f"Сумма оплаты: {amount} руб.\n"
-                                    f"Вам доступно {tries_left} примерок.\n"
-                                    f"Теперь вы можете продолжить работу с ботом."
-                                )
-                                
-                                # Уведомляем администратора
-                                await notify_admin(
-                                    f"💰 Получен платёж через DonationAlerts:\n"
-                                    f"Пользователь: @{username} ({user_id})\n"
-                                    f"Сумма: {amount} руб\n"
-                                    f"Примерок: {tries_left}"
-                                )
-                                
-                            except Exception as notify_error:
-                                logger.error(f"Ошибка уведомления пользователя {user_id}: {notify_error}")
-                                
-                        except Exception as donation_error:
-                            logger.error(f"Ошибка обработки доната: {donation_error}")
+                for donation in data.get("data", []):
+                    try:
+                        logger.info(f"Обрабатываем донат: {donation}")
+
+                        # 🛠 Исправлено: безопасное получение и очистка message
+                        message = (donation.get("message") or "").strip()
+                        if not message or not message.startswith("@"):
                             continue
                             
-                except Exception as request_error:
-                    logger.error(f"Ошибка запроса к DonationAlerts API: {request_error}")
-                    await asyncio.sleep(60)
-                    continue
-                    
+                        username = message.split()[0]  # Берем первое слово как username
+                        amount = float(donation.get("amount", 0))
+                        currency = donation.get("currency", "RUB")
+                        
+                        if currency != "RUB":
+                            logger.warning(f"Unsupported currency: {currency}")
+                            continue
+                            
+                        if amount <= 0:
+                            continue
+                            
+                        # Ищем пользователя в Supabase по username
+                        res = supabase.table(USERS_TABLE)\
+                            .select("*")\
+                            .eq("username", username)\
+                            .execute()
+                            
+                        if not res.data:
+                            logger.warning(f"User {username} not found in database")
+                            continue
+                            
+                        user_data = res.data[0]
+                        user_id = int(user_data.get("user_id", 0))
+                        
+                        # Обновляем данные пользователя
+                        tries_left = int(amount / PRICE_PER_TRY)
+                        update_data = {
+                            AMOUNT_FIELD: amount,
+                            TRIES_FIELD: tries_left,
+                            ACCESS_FIELD: True,
+                            STATUS_FIELD: "Оплачено",
+                            "payment_confirmed": True,
+                            "payment_method": "DonationAlerts",
+                            "payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        
+                        await supabase_api.update_user_row(user_id, update_data)
+                        
+                        # Уведомляем пользователя
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"✅ Ваш платёж подтверждён!\n\n"
+                                f"Сумма оплаты: {amount} руб.\n"
+                                f"Вам доступно {tries_left} примерок.\n"
+                                f"Теперь вы можете продолжить работу с ботом."
+                            )
+                            
+                            await notify_admin(
+                                f"💰 Получен платёж через DonationAlerts:\n"
+                                f"Пользователь: {username} ({user_id})\n"
+                                f"Сумма: {amount} руб\n"
+                                f"Примерок: {tries_left}"
+                            )
+                            
+                        except Exception as notify_error:
+                            logger.error(f"Ошибка уведомления пользователя {user_id}: {notify_error}")
+                            
+                    except Exception as donation_error:
+                        logger.error(f"Ошибка обработки доната: {donation_error}")
+                        continue
+                        
         except Exception as e:
             logger.error(f"Ошибка проверки DonationAlerts: {e}")
             
         await asyncio.sleep(60)
+
 
 async def main():
     """Основная функция запуска бота"""
