@@ -133,8 +133,8 @@ class BaserowAPI:
             if not row.get(ACCESS_FIELD, False):
                 return 0
 
-            tries_left = int(row.get(TRIES_FIELD, 0))
-            amount = float(row.get(AMOUNT_FIELD, 0))
+            tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
+            amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
 
             # Если примерки закончились, снимаем доступ
             if tries_left <= 0:
@@ -157,8 +157,8 @@ class BaserowAPI:
             if not row:
                 return False
 
-            tries_left = int(row.get(TRIES_FIELD, 0))
-            amount = float(row.get(AMOUNT_FIELD, 0))
+            tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
+            amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
 
             # Обновляем значения
             new_tries = max(0, tries_left - 1)
@@ -639,69 +639,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-async def check_payment_confirmations():
-    """Проверяет подтверждение оплаты администратором в Baserow"""
-    logger.info("🔄 Starting payment confirmation check loop...")
-    while True:
-        try:
-            # Получаем список пользователей с положительной суммой оплаты
-            url = f"{baserow.base_url}/?user_field_names=true&filter__{AMOUNT_FIELD}__greater_than=0"
-            headers = baserow.headers
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=headers) as resp:
-                    if resp.status != 200:
-                        logger.error(f"Error getting payments: {resp.status}")
-                        await asyncio.sleep(60)
-                        continue
-                    
-                    rows = await resp.json()
-                    
-                    if not rows.get("results"):
-                        logger.info("ℹ️ No payments found")
-                        await asyncio.sleep(60)
-                        continue
-                    
-                    for row in rows["results"]:
-                        user_id = int(row["user_id"])
-                        username = row["username"]
-                        amount = float(row.get(AMOUNT_FIELD, 0))
-                        access_granted = row.get(ACCESS_FIELD, False)
-                        tries_left = int(row.get(TRIES_FIELD, 0))
-                        
-                        # Если доступ еще не предоставлен, но сумма есть
-                        if amount > 0 and not access_granted:
-                            # Рассчитываем количество примерок
-                            new_tries = int(amount / PRICE_PER_TRY)
-                            
-                            # Обновляем запись
-                            update_url = f"{baserow.base_url}/{row['id']}/?user_field_names=true"
-                            await session.patch(update_url, headers=headers, json={
-                                ACCESS_FIELD: True,
-                                TRIES_FIELD: new_tries,
-                                STATUS_FIELD: "Оплачено",
-                                "payment_confirmed": True,
-                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                            })
-                            
-                            # Уведомляем пользователя
-                            try:
-                                await bot.send_message(
-                                    user_id,
-                                    f"✅ Ваш платёж подтверждён!\n\n"
-                                    f"Вам доступно {new_tries} примерок.\n"
-                                    f"Теперь вы можете продолжить работу с ботом."
-                                )
-                                logger.info(f"💰 Payment confirmed for {username} ({user_id}), {new_tries} tries added")
-                            except Exception as e:
-                                logger.error(f"Error notifying user {username} ({user_id}): {e}")
-                                continue
-                            
-        except Exception as e:
-            logger.error(f"Error in payment confirmation check: {e}")
-        
-        await asyncio.sleep(30)  # Проверяем каждые 30 секунд
-
 async def check_results():
     """Проверяет готовые результаты примерки"""
     logger.info("🔄 Starting check_results() loop...")
@@ -853,25 +790,6 @@ async def start_web_server():
     )
     logger.info(f"Webhook set to {webhook_url}")
 
-async def main():
-    """Основная функция запуска бота"""
-    try:
-        tasks = [
-            asyncio.create_task(check_payment_confirmations()),
-            asyncio.create_task(check_results())
-        ]
-        
-        await start_web_server()
-        
-        # Запускаем все задачи
-        await asyncio.gather(*tasks)
-        
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        await on_shutdown()
-    finally:
-        logger.info("Bot stopped")
-
 async def check_payment_confirmations():
     """Проверяет подтверждение оплаты администратором в Baserow"""
     logger.info("🔄 Starting payment confirmation check loop...")
@@ -897,14 +815,23 @@ async def check_payment_confirmations():
                     
                     for row in rows["results"]:
                         try:
-                            user_id = int(row.get("user_id", 0))
+                            user_id = int(row.get("user_id", 0)) if row.get("user_id") else 0
                             if not user_id:
                                 continue
                                 
                             username = row.get("username", "")
-                            amount = float(row.get(AMOUNT_FIELD, 0))
+                            
+                            # Безопасное получение суммы и попыток
+                            amount = 0.0
+                            tries_left = 0
+                            try:
+                                amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
+                                tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
+                            except (TypeError, ValueError) as conv_error:
+                                logger.warning(f"Ошибка преобразования данных для {user_id}: {conv_error}")
+                                continue
+                            
                             access_granted = bool(row.get(ACCESS_FIELD, False))
-                            tries_left = int(row.get(TRIES_FIELD, 0))
                             payment_confirmed = bool(row.get("payment_confirmed", False))
                             
                             # Если есть сумма оплаты, но доступ еще не предоставлен
@@ -941,6 +868,11 @@ async def check_payment_confirmations():
                                         f"Теперь вы можете продолжить работу с ботом."
                                     )
                                     logger.info(f"💰 Payment confirmed for {username} ({user_id}), {new_tries} tries added")
+                                    
+                                    # Логируем успешное обновление
+                                    logger.debug(f"Successfully updated user {user_id}: "
+                                                f"amount={amount}, tries={tries_left} -> new_tries={new_tries}")
+                                    
                                 except Exception as e:
                                     logger.error(f"Error notifying user {username} ({user_id}): {e}")
                                     continue
@@ -958,15 +890,55 @@ async def check_payment_confirmations():
         
         await asyncio.sleep(30)  # Проверяем каждые 30 секунд
 
+async def main():
+    """Основная функция запуска бота"""
+    try:
+        # Логирование конфигурации при старте
+        logger.info("Starting bot with configuration:")
+        logger.info(f"BOT_TOKEN: {'set' if BOT_TOKEN else 'not set'}")
+        logger.info(f"BASEROW_TOKEN: {'set' if BASEROW_TOKEN else 'not set'}")
+        logger.info(f"TABLE_ID: {TABLE_ID}")
+        logger.info(f"SUPABASE_URL: {'set' if SUPABASE_URL else 'not set'}")
+        logger.info(f"FREE_USERS: {FREE_USERS}")
+        
+        # Запускаем фоновые задачи
+        tasks = [
+            asyncio.create_task(check_payment_confirmations()),
+            asyncio.create_task(check_results())
+        ]
+        
+        # Настраиваем веб-сервер
+        await start_web_server()
+        
+        # Запускаем все задачи
+        await asyncio.gather(*tasks)
+        
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        await on_shutdown()
+    finally:
+        logger.info("Bot stopped")
+
 if __name__ == "__main__":
     try:
         loop = asyncio.get_event_loop()
+        
+        # Добавляем обработку исключений в цикл событий
+        def handle_exception(loop, context):
+            msg = context.get("exception", context["message"])
+            logger.error(f"Caught exception in event loop: {msg}")
+            
+        loop.set_exception_handler(handle_exception)
+        
+        # Запускаем основную функцию
         loop.create_task(main())
         loop.run_forever()
+        
     except KeyboardInterrupt:
         logger.info("Received exit signal, shutting down...")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
     finally:
+        # Корректное завершение работы
         loop.run_until_complete(on_shutdown())
         loop.close()
