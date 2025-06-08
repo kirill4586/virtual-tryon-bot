@@ -386,7 +386,7 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "choose_model")
+@dp.callback_query(F.data == "choose_model"))
 async def choose_model(callback_query: types.CallbackQuery):
     """Выбор модели"""
     if await is_processing(callback_query.from_user.id):
@@ -409,7 +409,7 @@ async def choose_model(callback_query: types.CallbackQuery):
         logger.error(f"Error in choose_model: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
-@dp.callback_query(F.data.startswith("view_examples_"))
+@dp.callback_query(F.data.startswith("view_examples_")))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -421,7 +421,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu")
+@dp.callback_query(F.data == "back_to_menu"))
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -505,7 +505,7 @@ async def show_payment_options(user: types.User):
         }
     )
 
-@dp.callback_query(F.data == "payment_options")
+@dp.callback_query(F.data == "payment_options"))
 async def payment_options(callback_query: types.CallbackQuery):
     """Показывает детали оплаты и кнопки"""
     user = callback_query.from_user
@@ -538,7 +538,7 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
-@dp.callback_query(F.data == "confirm_donation")
+@dp.callback_query(F.data == "confirm_donation"))
 async def confirm_donation(callback_query: types.CallbackQuery):
     """Подтверждение оплаты пользователем"""
     user = callback_query.from_user
@@ -843,67 +843,120 @@ async def start_web_server():
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
-    logger.info(f"Web server started on port {PORT}")
-    
-async def main():
-    """Основная функция запуска бота"""
-    try:
-        logger.info("Starting bot...")
-        
-        # Создаем список задач для корректного завершения
-        tasks = [
-            asyncio.create_task(check_results()),
-            asyncio.create_task(check_payment_confirmations())
-        ]
-        
-        app = setup_web_server()
-        runner = web.AppRunner(app)
-        await runner.setup()
+        await site.start()
+        logger.info(f"Web server started on port {PORT}")
         
         webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
-            drop_pending_updates=True,
+            drop_pending_updates=True
         )
-        logger.info(f"Webhook set to: {webhook_url}")
-
-        site = web.TCPSite(runner, '0.0.0.0', PORT)
-        await site.start()
-        logger.info(f"Server started on port {PORT}")
-
-        # Запуск фоновых задач
-        background_tasks = asyncio.gather(
-            check_payment_confirmations(),
-            check_results(),
-            return_exceptions=True
-        )
-
-        # Уведомление администратора о запуске
-        await notify_admin("🟢 Бот запущен и готов к работе")
-
-        # Бесконечный цикл работы бота
-        await asyncio.Event().wait()
-
-    except asyncio.CancelledError:
-        logger.info("Received cancel signal, shutting down...")
+        logger.info(f"Webhook set to {webhook_url}")
+        
+        # Запускаем все задачи
+        await asyncio.gather(*tasks)
+        
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.error(f"Error in main: {e}")
+        await on_shutdown()
     finally:
-        # Отмена фоновых задач
-        background_tasks.cancel()
-        try:
-            await background_tasks
-        except asyncio.CancelledError:
-            pass
+        logger.info("Bot stopped")
 
-        # Удаление вебхука и очистка
-        await bot.delete_webhook()
-        await cleanup_resources()
-        logger.info("Bot shutdown complete")
+async def check_payment_confirmations():
+    """Проверяет подтверждение оплаты администратором в Baserow"""
+    logger.info("🔄 Starting payment confirmation check loop...")
+    while True:
+        try:
+            # Получаем список пользователей с положительной суммой оплаты
+            url = f"{baserow.base_url}/?user_field_names=true"
+            headers = baserow.headers
+            
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status != 200:
+                        logger.error(f"Error getting payments: {resp.status}, response: {await resp.text()}")
+                        await asyncio.sleep(60)
+                        continue
+                    
+                    rows = await resp.json()
+                    
+                    if not rows.get("results"):
+                        logger.info("ℹ️ No payments found")
+                        await asyncio.sleep(60)
+                        continue
+                    
+                    for row in rows["results"]:
+                        try:
+                            user_id = int(row.get("user_id", 0))
+                            if not user_id:
+                                continue
+                                
+                            username = row.get("username", "")
+                            amount = float(row.get(AMOUNT_FIELD, 0))
+                            access_granted = bool(row.get(ACCESS_FIELD, False))
+                            tries_left = int(row.get(TRIES_FIELD, 0))
+                            payment_confirmed = bool(row.get("payment_confirmed", False))
+                            
+                            # Если есть сумма оплаты, но доступ еще не предоставлен
+                            if amount > 0 and not access_granted and not payment_confirmed:
+                                # Рассчитываем количество примерок
+                                new_tries = int(amount / PRICE_PER_TRY)
+                                
+                                # Обновляем запись
+                                update_data = {
+                                    ACCESS_FIELD: True,
+                                    TRIES_FIELD: new_tries,
+                                    STATUS_FIELD: "Оплачено",
+                                    "payment_confirmed": True,
+                                    "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                                }
+                                
+                                update_url = f"{baserow.base_url}/{row['id']}/?user_field_names=true"
+                                update_resp = await session.patch(
+                                    update_url,
+                                    headers=headers,
+                                    json=update_data
+                                )
+                                
+                                if update_resp.status != 200:
+                                    logger.error(f"Failed to update row {row['id']}: {update_resp.status}")
+                                    continue
+                                
+                                # Уведомляем пользователя
+                                try:
+                                    await bot.send_message(
+                                        user_id,
+                                        f"✅ Ваш платёж подтверждён!\n\n"
+                                        f"Вам доступно {new_tries} примерок.\n"
+                                        f"Теперь вы можете продолжить работу с ботом."
+                                    )
+                                    logger.info(f"💰 Payment confirmed for {username} ({user_id}), {new_tries} tries added")
+                                except Exception as e:
+                                    logger.error(f"Error notifying user {username} ({user_id}): {e}")
+                                    continue
+                                
+                        except Exception as user_error:
+                            logger.error(f"Error processing user row: {user_error}")
+                            continue
+                            
+        except aiohttp.ClientError as e:
+            logger.error(f"HTTP Client error in payment confirmation check: {e}")
+            await asyncio.sleep(60)
+        except Exception as e:
+            logger.error(f"Unexpected error in payment confirmation check: {e}")
+            await asyncio.sleep(60)
+        
+        await asyncio.sleep(30)  # Проверяем каждые 30 секунд
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        loop = asyncio.get_event_loop()
+        loop.create_task(main())
+        loop.run_forever()
     except KeyboardInterrupt:
-        logger.info("Bot stopped by keyboard interrupt")
+        logger.info("Received exit signal, shutting down...")
+    except Exception as e:
+        logger.error(f"Fatal error: {e}")
+    finally:
+        loop.run_until_complete(on_shutdown())
+        loop.close()
