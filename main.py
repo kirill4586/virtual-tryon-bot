@@ -71,7 +71,6 @@ PRICE_PER_TRY_FIELD = "price_per_try"  # Новая ячейка для хран
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -936,6 +935,38 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
+async def check_payment_periodically(user_id: int):
+    """Периодически проверяет оплату в Supabase"""
+    max_attempts = 12  # Максимальное количество попыток проверки
+    attempt = 0
+    check_interval = 10  # Интервал проверки в секундах
+    
+    while attempt < max_attempts:
+        try:
+            # Получаем данные пользователя из Supabase
+            user_row = await supabase_api.get_user_row(user_id)
+            if not user_row:
+                logger.error(f"User {user_id} not found in Supabase")
+                return False
+                
+            payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
+            
+            if payment_amount > 0:
+                # Если оплата найдена, предоставляем доступ
+                tries_left = await supabase_api.grant_access_for_payment(user_id)
+                if tries_left > 0:
+                    logger.info(f"Payment confirmed for user {user_id}. Tries left: {tries_left}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"Error checking payment for user {user_id}: {e}")
+            
+        attempt += 1
+        await asyncio.sleep(check_interval)
+        
+    logger.warning(f"Payment not confirmed for user {user_id} after {max_attempts} attempts")
+    return False
+
 @dp.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(callback_query: types.CallbackQuery):
     """Проверка оплаты"""
@@ -964,44 +995,55 @@ async def check_payment(callback_query: types.CallbackQuery):
                         operation = result["operations"][0]
                         amount = float(operation["amount"])
                         
-                        # Получаем текущую цену за примерку для пользователя
-                        user_row = await supabase_api.get_user_row(user_id)
-                        price_per_try = float(user_row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if user_row and user_row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
-                        
-                        # Рассчитываем количество примерок
-                        tries_left = int(amount / price_per_try)
-                        
-                        # Обновляем данные пользователя
+                        # Обновляем данные пользователя в Supabase
                         await supabase_api.upsert_row(
                             user_id=user_id,
                             username=callback_query.from_user.username or "",
                             data={
                                 "payment_amount": amount,
-                                "tries_left": tries_left,
-                                "access_granted": True,
-                                "status": "Оплачено",
                                 "payment_confirmed": True,
-                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-                                "price_per_try": price_per_try  # Сохраняем текущую цену
+                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
                             }
                         )
                         
-                        # Отправляем уведомления
-                        await supabase_api.send_payment_notifications(user_id, amount, tries_left)
-                        return
+                        # Предоставляем доступ на основе оплаты
+                        tries_left = await supabase_api.grant_access_for_payment(user_id)
+                        
+                        if tries_left > 0:
+                            # Уведомление администратору
+                            admin_message = (
+                                f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) оплатил {amount} руб.\n"
+                                f"🎁 Зачислено: {tries_left} примерок\n"
+                                f"💵 Цена за примерку: {PRICE_PER_TRY} руб."
+                            )
+                            await notify_admin(admin_message)
+                            
+                            # Уведомление пользователю
+                            user_message = (
+                                f"✅ Оплата {amount} руб. подтверждена!\n"
+                                f"🎁 Зачислено: <b>{tries_left} примерок</b>\n\n"
+                                "Теперь вы можете продолжить работу с ботом."
+                            )
+                            await bot.send_message(user_id, user_message)
+                            return
                 
-        # Если оплата не найдена
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(
-                text="🔄 Проверить ещё раз", 
-                callback_data=f"check_payment_{payment_label}"
-            )]
-        ])
+        # Если оплата не найдена через API, проверяем в Supabase
+        payment_confirmed = await check_payment_periodically(user_id)
         
-        await callback_query.message.edit_text(
-            "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
-            reply_markup=keyboard
-        )
+        if not payment_confirmed:
+            # Если оплата не найдена
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="🔄 Проверить ещё раз", 
+                    callback_data=f"check_payment_{payment_label}"
+                )]
+            ])
+            
+            await callback_query.message.edit_text(
+                "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
+                reply_markup=keyboard
+            )
+        
         await callback_query.answer()
         
     except Exception as e:
