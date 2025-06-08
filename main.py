@@ -71,6 +71,7 @@ PRICE_PER_TRY_FIELD = "price_per_try"  # Новая ячейка для хран
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
