@@ -48,15 +48,15 @@ UPLOADS_BUCKET = "uploads"
 SUPPORTED_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.webp')
 EXAMPLES_PER_PAGE = 3
 MODELS_PER_PAGE = 3
-DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()  # Добавлен strip()
+DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
 PORT = int(os.getenv("PORT", 4000))
 
 # Названия полей в Supabase
-USERS_TABLE = "users"  # Таблица пользователей
-ACCESS_FIELD = "access_granted"  # Поле с галочкой доступа
-AMOUNT_FIELD = "payment_amount"  # Поле с суммой оплаты
-TRIES_FIELD = "tries_left"       # Поле с количеством примерок
-STATUS_FIELD = "status"          # Поле со статусом
+USERS_TABLE = "users"
+ACCESS_FIELD = "access_granted"
+AMOUNT_FIELD = "payment_amount"
+TRIES_FIELD = "tries_left"
+STATUS_FIELD = "status"
 
 # Инициализация клиентов
 bot = Bot(
@@ -126,23 +126,18 @@ class SupabaseAPI:
             return None
 
     async def check_and_update_access(self, user_id: int):
-        """
-        Проверяет доступ пользователя и обновляет количество примерок.
-        Возвращает количество доступных примерок или None при ошибке.
-        """
+        """Проверяет доступ пользователя и обновляет количество примерок"""
         try:
             row = await self.get_user_row(user_id)
             if not row:
                 return 0
 
-            # Если доступ не предоставлен
             if not row.get(ACCESS_FIELD, False):
                 return 0
 
             tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
             amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
 
-            # Если примерки закончились, снимаем доступ
             if tries_left <= 0:
                 await self.update_user_row(user_id, {
                     ACCESS_FIELD: False,
@@ -166,7 +161,6 @@ class SupabaseAPI:
             tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
             amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
 
-            # Обновляем значения
             new_tries = max(0, tries_left - 1)
             new_amount = max(0, amount - PRICE_PER_TRY)
 
@@ -176,7 +170,6 @@ class SupabaseAPI:
                 "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
             }
 
-            # Если примерки закончились, снимаем доступ
             if new_tries <= 0:
                 update_data[ACCESS_FIELD] = False
                 update_data[STATUS_FIELD] = "Не оплачено"
@@ -198,14 +191,12 @@ class SupabaseAPI:
             })
 
             if row:
-                # Обновляем существующую запись
                 res = self.supabase.table(USERS_TABLE)\
                     .update(data)\
                     .eq("user_id", str(user_id))\
                     .execute()
                 return res.data[0] if res.data else None
             else:
-                # Создаем новую запись
                 data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 res = self.supabase.table(USERS_TABLE)\
                     .insert(data)\
@@ -238,10 +229,8 @@ class SupabaseAPI:
             if payment_amount <= 0:
                 return 0
 
-            # Рассчитываем количество примерок
             tries_left = int(payment_amount / PRICE_PER_TRY)
 
-            # Обновляем запись пользователя
             update_data = {
                 ACCESS_FIELD: True,
                 TRIES_FIELD: tries_left,
@@ -263,11 +252,9 @@ async def cleanup_resources():
     """Закрытие всех ресурсов и соединений"""
     logger.info("Cleaning up resources...")
     
-    # Закрытие сессий aiohttp
     if 'session' in globals():
         await session.close()
     
-    # Закрытие соединения с ботом
     await bot.session.close()
     
     logger.info("All resources cleaned up")
@@ -277,19 +264,15 @@ async def on_shutdown():
     try:
         logger.info("Shutting down...")
         
-        # Отмена всех pending задач
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
         for task in tasks:
             task.cancel()
         
-        # Ожидание завершения задач
         await asyncio.gather(*tasks, return_exceptions=True)
         
-        # Удаление вебхука
         await bot.delete_webhook()
         logger.info("Webhook removed")
         
-        # Очистка ресурсов
         await cleanup_resources()
         
     except Exception as e:
@@ -328,7 +311,7 @@ async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
 async def get_user_tries(user_id: int) -> int:
     """Получение количества оставшихся примерок у пользователя с проверкой доступа"""
     if user_id in FREE_USERS:
-        return 100  # Большое число для бесплатных пользователей
+        return 100
 
     tries = await supabase_api.check_and_update_access(user_id)
     return tries if tries is not None else 0
@@ -347,19 +330,111 @@ async def is_processing(user_id: int) -> bool:
     
     return len(photos) >= 2 or (len(photos) >= 1 and model_selected)
 
-async def send_initial_examples(chat_id: int):
-    """Отправка примеров работ"""
+async def send_examples_page(chat_id: int, page: int):
+    """Отправка страницы с примерами работ"""
     try:
-        media = [
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1013DE2SDg8u0V69ePxTYki2WWSNaGWVi"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1010hYD1PjCQX-hZQAfRPigkLyz1PAaCH"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=104v4mW-4-HIH40RIg9-L86sTPWQsxCEF")
-        ]
+        # Получаем список примеров из Supabase Storage
+        examples = supabase.storage.from_(EXAMPLES_BUCKET).list()
+        examples = [e for e in examples if e.name.lower().endswith(SUPPORTED_EXTENSIONS)]
+        
+        if not examples:
+            await bot.send_message(chat_id, "📸 Примеры работ временно недоступны")
+            return
+            
+        # Разбиваем на страницы
+        total_pages = (len(examples) + EXAMPLES_PER_PAGE - 1) // EXAMPLES_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
+        start_idx = page * EXAMPLES_PER_PAGE
+        end_idx = min(start_idx + EXAMPLES_PER_PAGE, len(examples))
+        
+        # Создаем медиагруппу
+        media = []
+        for example in examples[start_idx:end_idx]:
+            url = supabase.storage.from_(EXAMPLES_BUCKET).get_public_url(example.name)
+            media.append(InputMediaPhoto(media=url))
+        
         await bot.send_media_group(chat_id, media=media)
-        logger.info(f"Примеры фото отправлены {chat_id}")
+        
+        # Создаем клавиатуру с навигацией
+        keyboard = []
+        if page > 0:
+            keyboard.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"view_examples_{page-1}"))
+        if page < total_pages - 1:
+            keyboard.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"view_examples_{page+1}"))
+        
+        if keyboard:
+            await bot.send_message(
+                chat_id,
+                f"Страница {page + 1} из {total_pages}",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[keyboard])
+            )
+            
     except Exception as e:
         logger.error(f"Ошибка отправки примеров: {e}")
         await bot.send_message(chat_id, "📸 Примеры работ временно недоступны")
+
+async def send_models_page(chat_id: int, category: str, page: int):
+    """Отправка страницы с моделями"""
+    try:
+        # Получаем список моделей из Supabase Storage
+        models = supabase.storage.from_(MODELS_BUCKET).list(category)
+        models = [m for m in models if m.name.lower().endswith(SUPPORTED_EXTENSIONS)]
+        
+        if not models:
+            await bot.send_message(chat_id, f"Модели в категории {category} временно недоступны")
+            return
+            
+        # Разбиваем на страницы
+        total_pages = (len(models) + MODELS_PER_PAGE - 1) // MODELS_PER_PAGE
+        page = max(0, min(page, total_pages - 1))
+        start_idx = page * MODELS_PER_PAGE
+        end_idx = min(start_idx + MODELS_PER_PAGE, len(models))
+        
+        # Создаем медиагруппу
+        media = []
+        for model in models[start_idx:end_idx]:
+            url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{category}/{model.name}")
+            media.append(InputMediaPhoto(media=url))
+        
+        await bot.send_media_group(chat_id, media=media)
+        
+        # Создаем клавиатуру с навигацией и кнопками выбора
+        keyboard_buttons = []
+        
+        # Кнопки выбора модели
+        for i, model in enumerate(models[start_idx:end_idx]):
+            model_name = os.path.splitext(model.name)[0]
+            keyboard_buttons.append([
+                InlineKeyboardButton(
+                    text=f"Выбрать {model_name}",
+                    callback_data=f"select_model_{category}_{model.name}"
+                )
+            ])
+        
+        # Кнопки навигации
+        nav_buttons = []
+        if page > 0:
+            nav_buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"models_{category}_{page-1}"))
+        if page < total_pages - 1:
+            nav_buttons.append(InlineKeyboardButton(text="Вперед ➡️", callback_data=f"models_{category}_{page+1}"))
+        
+        if nav_buttons:
+            keyboard_buttons.append(nav_buttons)
+        
+        # Кнопка возврата
+        keyboard_buttons.append([
+            InlineKeyboardButton(text="🔙 Назад к категориям", callback_data="choose_model")
+        ])
+        
+        await bot.send_message(
+            chat_id,
+            f"Модели {category} - Страница {page + 1} из {total_pages}",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard_buttons)
+        )
+            
+    except Exception as e:
+        logger.error(f"Ошибка отправки моделей: {e}")
+        await bot.send_message(chat_id, f"Модели в категории {category} временно недоступны")
 
 async def notify_admin(message: str):
     """Отправка уведомления администратору"""
@@ -374,8 +449,6 @@ async def notify_admin(message: str):
 async def send_welcome(user_id: int, username: str, full_name: str):
     """Отправка приветственного сообщения"""
     try:
-        await send_initial_examples(user_id)
-        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")],
             [InlineKeyboardButton(text="📸 Посмотреть примеры", callback_data="view_examples_0")]
@@ -425,7 +498,7 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "choose_model")
+@dp.callback_query(F.data == "choose_model"))
 async def choose_model(callback_query: types.CallbackQuery):
     """Выбор модели"""
     if await is_processing(callback_query.from_user.id):
@@ -448,7 +521,89 @@ async def choose_model(callback_query: types.CallbackQuery):
         logger.error(f"Error in choose_model: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
-@dp.callback_query(F.data.startswith("view_examples_"))
+@dp.callback_query(F.data.startswith("models_")))
+async def handle_models_category(callback_query: types.CallbackQuery):
+    """Обработчик выбора категории моделей"""
+    try:
+        parts = callback_query.data.split("_")
+        category = parts[1]
+        page = int(parts[2])
+        
+        await send_models_page(callback_query.from_user.id, category, page)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in handle_models_category: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("select_model_")))
+async def select_model(callback_query: types.CallbackQuery):
+    """Обработчик выбора конкретной модели"""
+    try:
+        user_id = callback_query.from_user.id
+        parts = callback_query.data.split("_")
+        category = parts[2]
+        model_name = "_".join(parts[3:])
+        
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+        
+        # Скачиваем выбранную модель
+        model_path = f"{category}/{model_name}"
+        model_data = supabase.storage.from_(MODELS_BUCKET).download(model_path)
+        
+        # Сохраняем локально
+        local_path = os.path.join(user_dir, "selected_model.jpg")
+        with open(local_path, 'wb') as f:
+            f.write(model_data)
+        
+        # Проверяем, есть ли уже фото одежды
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+        
+        if existing_photos:
+            # Если есть фото одежды, можно начинать обработку
+            await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
+                "model_selected": model_name,
+                "photo_person": True,
+                "status": "В обработке",
+                "photo1_received": True,
+                "photo2_received": True,
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+            
+            # Списание одной примерки для платных пользователей
+            if user_id not in FREE_USERS:
+                await supabase_api.decrement_tries(user_id)
+            
+            await callback_query.message.answer(
+                "✅ Модель выбрана и фото одежды получено.\n\n"
+                "🔄 Идёт примерка. Ожидайте результат!"
+            )
+        else:
+            # Если фото одежды еще нет, ждем его
+            await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
+                "model_selected": model_name,
+                "photo_person": True,
+                "status": "Ожидается фото одежды",
+                "photo1_received": False,
+                "photo2_received": True
+            })
+            
+            await callback_query.message.answer(
+                "✅ Модель выбрана.\n\n"
+                "Теперь отправьте фото одежды для примерки."
+            )
+        
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in select_model: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при выборе модели. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("view_examples_")))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -460,7 +615,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu")
+@dp.callback_query(F.data == "back_to_menu"))
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -530,7 +685,6 @@ async def show_payment_options(user: types.User):
         ])
     )
     
-    # Добавляем запись в Supabase о попытке оплаты
     await supabase_api.upsert_row(
         user_id=user.id,
         username=user.username or "",
@@ -544,7 +698,7 @@ async def show_payment_options(user: types.User):
         }
     )
 
-@dp.callback_query(F.data == "payment_options")
+@dp.callback_query(F.data == "payment_options"))
 async def payment_options(callback_query: types.CallbackQuery):
     """Показывает детали оплаты и кнопки"""
     user = callback_query.from_user
@@ -577,7 +731,7 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
-@dp.callback_query(F.data == "confirm_donation")
+@dp.callback_query(F.data == "confirm_donation"))
 async def confirm_donation(callback_query: types.CallbackQuery):
     """Подтверждение оплаты пользователем"""
     user = callback_query.from_user
@@ -586,7 +740,6 @@ async def confirm_donation(callback_query: types.CallbackQuery):
         "Если вы указали ваш Telegram username при оплате, это поможет быстрее вас найти."
     )
     
-    # Обновляем статус в Supabase
     await supabase_api.upsert_row(
         user_id=user.id,
         username=user.username or "",
@@ -599,7 +752,6 @@ async def confirm_donation(callback_query: types.CallbackQuery):
         }
     )
     
-    # Уведомляем администратора
     await notify_admin(
         f"💰 Пользователь @{user.username} ({user.id}) сообщил об оплате.\n"
         f"Требуется проверка и подтверждение."
@@ -632,7 +784,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             
             await upload_to_supabase(file_path, user.id, "photos")
             
-            # Списание одной примерки
             if user.id not in FREE_USERS:
                 await supabase_api.decrement_tries(user.id)
             
@@ -771,8 +922,20 @@ async def check_results():
                             logger.error(f"❌ Ошибка обновления данных: {db_error}")
 
                         try:
+                            # Удаляем все файлы в папке пользователя
+                            for filename in os.listdir(user_dir):
+                                file_path = os.path.join(user_dir, filename)
+                                try:
+                                    if os.path.isfile(file_path) or os.path.islink(file_path):
+                                        os.unlink(file_path)
+                                    elif os.path.isdir(file_path):
+                                        shutil.rmtree(file_path)
+                                except Exception as e:
+                                    logger.error(f"❌ Ошибка удаления файла {file_path}: {e}")
+                            
+                            # Удаляем саму папку пользователя
                             shutil.rmtree(user_dir)
-                            logger.info(f"🗑️ Папка {user_dir} удалена")
+                            logger.info(f"🗑️ Папка {user_dir} и все её содержимое удалены")
                         except Exception as cleanup_error:
                             logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
@@ -924,7 +1087,6 @@ async def check_donation_alerts():
                     try:
                         logger.info(f"Обрабатываем донат: {donation}")
 
-                        # 🛠 Исправлено: безопасное получение и очистка message
                         message = (donation.get("message") or "").strip()
                         if not message or not message.startswith("@"):
                             continue
@@ -1007,7 +1169,7 @@ async def main():
             asyncio.create_task(start_web_server()),
             asyncio.create_task(check_results()),
             asyncio.create_task(check_payment_confirmations()),
-            #asyncio.create_task(check_donation_alerts())
+            asyncio.create_task(check_donation_alerts())
         ]
         
         # Запускаем все задачи
