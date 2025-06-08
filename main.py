@@ -1007,7 +1007,7 @@ async def main():
             asyncio.create_task(start_web_server()),
             asyncio.create_task(check_results()),
             asyncio.create_task(check_payment_confirmations()),
-            asyncio.create_task(check_donation_alerts())
+            #asyncio.create_task(check_donation_alerts())
         ]
         
         # Запускаем все задачи
