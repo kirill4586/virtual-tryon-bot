@@ -227,6 +227,36 @@ class SupabaseAPI:
             logger.error(f"Error resetting flags: {e}")
             return False
 
+    async def grant_access_for_payment(self, user_id: int):
+        """Предоставляет доступ на основе оплаты и возвращает количество примерок"""
+        try:
+            row = await self.get_user_row(user_id)
+            if not row:
+                return 0
+
+            payment_amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
+            if payment_amount <= 0:
+                return 0
+
+            # Рассчитываем количество примерок
+            tries_left = int(payment_amount / PRICE_PER_TRY)
+
+            # Обновляем запись пользователя
+            update_data = {
+                ACCESS_FIELD: True,
+                TRIES_FIELD: tries_left,
+                STATUS_FIELD: "Оплачено",
+                "payment_confirmed": True,
+                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+            await self.update_user_row(user_id, update_data)
+            return tries_left
+
+        except Exception as e:
+            logger.error(f"Error granting access for payment: {e}")
+            return 0
+
 supabase_api = SupabaseAPI()
 
 async def cleanup_resources():
@@ -809,7 +839,6 @@ async def check_payment_confirmations():
                 .select("*")\
                 .gt(AMOUNT_FIELD, 0)\
                 .eq(ACCESS_FIELD, False)\
-                .eq("payment_confirmed", False)\
                 .execute()
             
             if not res.data:
@@ -824,57 +853,29 @@ async def check_payment_confirmations():
                         continue
                         
                     username = row.get("username", "")
+                    payment_amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
                     
-                    # Безопасное получение суммы и попыток
-                    amount = 0.0
-                    tries_left = 0
-                    try:
-                        amount = float(row.get(AMOUNT_FIELD, 0)) if row.get(AMOUNT_FIELD) else 0.0
-                        tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
-                    except (TypeError, ValueError) as conv_error:
-                        logger.warning(f"Ошибка преобразования данных для {user_id}: {conv_error}")
+                    if payment_amount <= 0:
                         continue
+                        
+                    # Предоставляем доступ
+                    tries_left = await supabase_api.grant_access_for_payment(user_id)
                     
-                    access_granted = bool(row.get(ACCESS_FIELD, False))
-                    payment_confirmed = bool(row.get("payment_confirmed", False))
-                    
-                    # Если есть сумма оплаты, но доступ еще не предоставлен
-                    if amount > 0 and not access_granted and not payment_confirmed:
-                        # Рассчитываем количество примерок
-                        new_tries = int(amount / PRICE_PER_TRY)
-                        
-                        # Обновляем запись
-                        update_data = {
-                            ACCESS_FIELD: True,
-                            TRIES_FIELD: new_tries,
-                            STATUS_FIELD: "Оплачено",
-                            "payment_confirmed": True,
-                            "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                        }
-                        
-                        update_res = supabase.table(USERS_TABLE)\
-                            .update(update_data)\
-                            .eq("user_id", str(user_id))\
-                            .execute()
-                        
-                        if not update_res.data:
-                            logger.error(f"Failed to update user {user_id}")
-                            continue
-                        
+                    if tries_left > 0:
                         # Уведомляем пользователя
                         try:
                             await bot.send_message(
                                 user_id,
                                 f"✅ Ваш платёж подтверждён!\n\n"
-                                f"Вам доступно {new_tries} примерок.\n"
+                                f"Сумма оплаты: {payment_amount} руб.\n"
+                                f"Вам доступно {tries_left} примерок.\n"
                                 f"Теперь вы можете продолжить работу с ботом."
                             )
-                            logger.info(f"💰 Payment confirmed for {username} ({user_id}), {new_tries} tries added")
                             
-                            # Логируем успешное подтверждение
+                            # Уведомляем администратора
                             await notify_admin(
                                 f"💰 Пользователь @{username} ({user_id}) получил доступ.\n"
-                                f"Сумма: {amount} руб, примерок: {new_tries}"
+                                f"Сумма: {payment_amount} руб, примерок: {tries_left}"
                             )
                             
                         except Exception as notify_error:
@@ -889,6 +890,111 @@ async def check_payment_confirmations():
             
         await asyncio.sleep(60)
 
+async def check_donation_alerts():
+    """Проверяет платежи через DonationAlerts API"""
+    if not DONATION_ALERTS_TOKEN:
+        logger.warning("DonationAlerts token not configured")
+        return
+        
+    logger.info("🔄 Starting DonationAlerts check loop...")
+    headers = {
+        "Authorization": f"Bearer {DONATION_ALERTS_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    while True:
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Получаем последние донаты
+                url = "https://www.donationalerts.com/api/v1/alerts/donations"
+                params = {
+                    "page": 1,
+                    "per_page": 10
+                }
+                
+                async with session.get(url, headers=headers, params=params) as resp:
+                    if resp.status != 200:
+                        logger.error(f"DonationAlerts API error: {resp.status}")
+                        await asyncio.sleep(60)
+                        continue
+                        
+                    data = await resp.json()
+                    
+                for donation in data.get("data", []):
+                    try:
+                        # Парсим сообщение для получения username
+                        message = donation.get("message", "").strip()
+                        if not message or not message.startswith("@"):
+                            continue
+                            
+                        username = message.split()[0]  # Берем первое слово как username
+                        amount = float(donation.get("amount", 0))
+                        currency = donation.get("currency", "RUB")
+                        
+                        if currency != "RUB":
+                            logger.warning(f"Unsupported currency: {currency}")
+                            continue
+                            
+                        if amount <= 0:
+                            continue
+                            
+                        # Ищем пользователя в Supabase по username
+                        res = supabase.table(USERS_TABLE)\
+                            .select("*")\
+                            .eq("username", username)\
+                            .execute()
+                            
+                        if not res.data:
+                            logger.warning(f"User {username} not found in database")
+                            continue
+                            
+                        user_data = res.data[0]
+                        user_id = int(user_data.get("user_id", 0))
+                        
+                        # Обновляем данные пользователя
+                        tries_left = int(amount / PRICE_PER_TRY)
+                        update_data = {
+                            AMOUNT_FIELD: amount,
+                            TRIES_FIELD: tries_left,
+                            ACCESS_FIELD: True,
+                            STATUS_FIELD: "Оплачено",
+                            "payment_confirmed": True,
+                            "payment_method": "DonationAlerts",
+                            "payment_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                        }
+                        
+                        await supabase_api.update_user_row(user_id, update_data)
+                        
+                        # Уведомляем пользователя
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"✅ Ваш платёж подтверждён!\n\n"
+                                f"Сумма оплаты: {amount} руб.\n"
+                                f"Вам доступно {tries_left} примерок.\n"
+                                f"Теперь вы можете продолжить работу с ботом."
+                            )
+                            
+                            # Уведомляем администратора
+                            await notify_admin(
+                                f"💰 Получен платёж через DonationAlerts:\n"
+                                f"Пользователь: @{username} ({user_id})\n"
+                                f"Сумма: {amount} руб\n"
+                                f"Примерок: {tries_left}"
+                            )
+                            
+                        except Exception as notify_error:
+                            logger.error(f"Ошибка уведомления пользователя {user_id}: {notify_error}")
+                            
+                    except Exception as donation_error:
+                        logger.error(f"Ошибка обработки доната: {donation_error}")
+                        continue
+                        
+        except Exception as e:
+            logger.error(f"Ошибка проверки DonationAlerts: {e}")
+            
+        await asyncio.sleep(60)
+
 async def main():
     """Основная функция запуска бота"""
     try:
@@ -898,7 +1004,8 @@ async def main():
         tasks = [
             asyncio.create_task(start_web_server()),
             asyncio.create_task(check_results()),
-            asyncio.create_task(check_payment_confirmations())
+            asyncio.create_task(check_payment_confirmations()),
+            asyncio.create_task(check_donation_alerts())
         ]
         
         # Запускаем все задачи
@@ -918,4 +1025,4 @@ if __name__ == "__main__":
         logger.error(f"Fatal error: {e}")
     finally:
         # Гарантированная очистка ресурсов
-        asyncio.run(cleanup_resources())  # Добавлена закрывающая скобка
+        asyncio.run(cleanup_resources())
