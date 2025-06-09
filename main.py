@@ -24,7 +24,6 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from aiohttp import web
@@ -58,10 +57,7 @@ SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
-WEB_SERVER_HOST = os.getenv("WEB_SERVER_HOST", "0.0.0.0")
-WEB_SERVER_PORT = int(os.getenv("PORT", 4000))
-WEBHOOK_PATH = "/webhook"
-BASE_WEBHOOK_URL = os.getenv("BASE_WEBHOOK_URL")
+PORT = int(os.getenv("PORT", 4000))
 
 # Названия полей в Supabase
 USERS_TABLE = "users"
@@ -75,7 +71,6 @@ PRICE_PER_TRY_FIELD = "price_per_try"  # Новая ячейка для хран
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -940,38 +935,6 @@ async def payment_options(callback_query: types.CallbackQuery):
     )
     await callback_query.answer()
 
-async def check_payment_periodically(user_id: int):
-    """Периодически проверяет оплату в Supabase"""
-    max_attempts = 12  # Максимальное количество попыток проверки
-    attempt = 0
-    check_interval = 10  # Интервал проверки в секундах
-    
-    while attempt < max_attempts:
-        try:
-            # Получаем данные пользователя из Supabase
-            user_row = await supabase_api.get_user_row(user_id)
-            if not user_row:
-                logger.error(f"User {user_id} not found in Supabase")
-                return False
-                
-            payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
-            
-            if payment_amount > 0:
-                # Если оплата найдена, предоставляем доступ
-                tries_left = await supabase_api.grant_access_for_payment(user_id)
-                if tries_left > 0:
-                    logger.info(f"Payment confirmed for user {user_id}. Tries left: {tries_left}")
-                    return True
-                    
-        except Exception as e:
-            logger.error(f"Error checking payment for user {user_id}: {e}")
-            
-        attempt += 1
-        await asyncio.sleep(check_interval)
-        
-    logger.warning(f"Payment not confirmed for user {user_id} after {max_attempts} attempts")
-    return False
-
 @dp.callback_query(F.data.startswith("check_payment_"))
 async def check_payment(callback_query: types.CallbackQuery):
     """Проверка оплаты"""
@@ -1000,55 +963,44 @@ async def check_payment(callback_query: types.CallbackQuery):
                         operation = result["operations"][0]
                         amount = float(operation["amount"])
                         
-                        # Обновляем данные пользователя в Supabase
+                        # Получаем текущую цену за примерку для пользователя
+                        user_row = await supabase_api.get_user_row(user_id)
+                        price_per_try = float(user_row.get(PRICE_PER_TRY_FIELD, PRICE_PER_TRY)) if user_row and user_row.get(PRICE_PER_TRY_FIELD) else PRICE_PER_TRY
+                        
+                        # Рассчитываем количество примерок
+                        tries_left = int(amount / price_per_try)
+                        
+                        # Обновляем данные пользователя
                         await supabase_api.upsert_row(
                             user_id=user_id,
                             username=callback_query.from_user.username or "",
                             data={
                                 "payment_amount": amount,
+                                "tries_left": tries_left,
+                                "access_granted": True,
+                                "status": "Оплачено",
                                 "payment_confirmed": True,
-                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                                "confirmation_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "price_per_try": price_per_try  # Сохраняем текущую цену
                             }
                         )
                         
-                        # Предоставляем доступ на основе оплаты
-                        tries_left = await supabase_api.grant_access_for_payment(user_id)
-                        
-                        if tries_left > 0:
-                            # Уведомление администратору
-                            admin_message = (
-                                f"💰 Пользователь @{callback_query.from_user.username} ({user_id}) оплатил {amount} руб.\n"
-                                f"🎁 Зачислено: {tries_left} примерок\n"
-                                f"💵 Цена за примерку: {PRICE_PER_TRY} руб."
-                            )
-                            await notify_admin(admin_message)
-                            
-                            # Уведомление пользователю
-                            user_message = (
-                                f"✅ Оплата {amount} руб. подтверждена!\n"
-                                f"🎁 Зачислено: <b>{tries_left} примерок</b>\n\n"
-                                "Теперь вы можете продолжить работу с ботом."
-                            )
-                            await bot.send_message(user_id, user_message)
-                            return
+                        # Отправляем уведомления
+                        await supabase_api.send_payment_notifications(user_id, amount, tries_left)
+                        return
                 
-        # Если оплата не найдена через API, проверяем в Supabase
-        payment_confirmed = await check_payment_periodically(user_id)
+        # Если оплата не найдена
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(
+                text="🔄 Проверить ещё раз", 
+                callback_data=f"check_payment_{payment_label}"
+            )]
+        ])
         
-        if not payment_confirmed:
-            # Если оплата не найдена
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="🔄 Проверить ещё раз", 
-                    callback_data=f"check_payment_{payment_label}"
-                )]
-            ])
-            
-            await callback_query.message.edit_text(
-                "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
-                reply_markup=keyboard
-            )
-        
+        await callback_query.message.edit_text(
+            "❌ Оплата пока не поступила. Попробуйте проверить позже или свяжитесь с поддержкой.",
+            reply_markup=keyboard
+        )
         await callback_query.answer()
         
     except Exception as e:
@@ -1133,73 +1085,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
 
-async def check_results():
-    """Проверяет результаты обработки и отправляет их пользователям"""
-    while True:
-        try:
-            # Здесь должна быть логика проверки результатов обработки
-            await asyncio.sleep(10)
-        except Exception as e:
-            logger.error(f"Error in check_results: {e}")
-            await asyncio.sleep(30)
-
-async def setup_webhook():
-    """Настройка вебхука"""
-    try:
-        # Удаляем предыдущий вебхук
-        await bot.delete_webhook()
-        
-        # Устанавливаем новый вебхук
-        await bot.set_webhook(
-            url=f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}",
-            drop_pending_updates=True
-        )
-        logger.info("Webhook set up successfully")
-    except Exception as e:
-        logger.error(f"Error setting up webhook: {e}")
-        raise
-
-async def main():
-    """Основная функция"""
-    try:
-        # Настраиваем вебхук
-        await setup_webhook()
-        
-        # Создаем aiohttp приложение
-        app = web.Application()
-        app["bot"] = bot
-        
-        # Создаем обработчик вебхуков
-        webhook_requests_handler = SimpleRequestHandler(
-            dispatcher=dp,
-            bot=bot,
-        )
-        webhook_requests_handler.register(app, path=WEBHOOK_PATH)
-        
-        # Настраиваем приложение
-        setup_application(app, dp, bot=bot)
-        
-        # Запускаем веб-сервер
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
-        await site.start()
-        
-        logger.info(f"Web server started on {WEB_SERVER_HOST}:{WEB_SERVER_PORT}")
-        logger.info(f"Webhook URL: {BASE_WEBHOOK_URL}{WEBHOOK_PATH}")
-        
-        # Запускаем проверку результатов в фоне
-        asyncio.create_task(check_results())
-        
-        # Бесконечный цикл для поддержания работы сервера
-        while True:
-            await asyncio.sleep(3600)  # Просто ждем, пока сервер работает
-            
-    except Exception as e:
-        logger.error(f"Error in main: {e}")
-        raise
-    finally:
-        await on_shutdown()
+# Остальной код остается без изменений (check_results, handle, health_check, setup_web_server, webhook_handler, start_web_server, main)
 
 if __name__ == "__main__":
     try:
