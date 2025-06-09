@@ -868,7 +868,69 @@ async def more_examples(callback_query: types.CallbackQuery):
         logger.error(f"Error in more_examples: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
+async def process_photo(message: types.Message, user: types.User, user_dir: str):
+    """Обработка и сохранение фотографии"""
+    try:
+        user_id = user.id
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
 
+        # Получаем файл фотографии
+        photo = message.photo[-1]  # Берем фото наибольшего размера
+        file_id = photo.file_id
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+
+        # Определяем тип фото (одежда или человек)
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+
+        if not existing_photos:
+            # Первое фото - одежда
+            photo_type = 1
+            filename = f"photo_1{os.path.splitext(file_path)[1]}"
+            caption = "✅ Фото одежды получено. Теперь отправьте фото человека или выберите модель."
+        else:
+            # Второе фото - человек
+            photo_type = 2
+            filename = f"photo_2{os.path.splitext(file_path)[1]}"
+            caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
+
+        # Сохраняем фото локально
+        local_path = os.path.join(user_dir, filename)
+        await bot.download_file(file_path, local_path)
+
+        # Загружаем фото в Supabase
+        await upload_to_supabase(local_path, user_id, "photos")
+
+        # Обновляем статус в базе данных
+        if photo_type == 1:
+            await supabase_api.upsert_row(user_id, user.username, {
+                "photo1_received": True,
+                "photo2_received": False,
+                "status": "Ожидается фото человека"
+            })
+        else:
+            await supabase_api.upsert_row(user_id, user.username, {
+                "photo1_received": True,
+                "photo2_received": True,
+                "status": "В обработке",
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+            })
+
+            if user_id not in FREE_USERS:
+                await supabase_api.decrement_tries(user_id)
+
+            await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
+
+        await message.answer(caption)
+
+    except Exception as e:
+        logger.error(f"Error processing photo: {e}")
+        await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+        raise
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
     """Обработчик фотографий"""
