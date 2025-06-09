@@ -908,12 +908,14 @@ async def show_payment_options(user: types.User):
         f"- 90 руб = 3 примерки\n"
         "и так далее..."
     )
-		
-		async def monitor_payment_changes_task():
+
+async def monitor_payment_changes_task():  # <-- Убедитесь, что здесь используются пробелы, а не табы
     """Фоновая задача для мониторинга изменений payment_amount"""
     logger.info("Starting payment amount monitoring task...")
     while True:
         try:
+            # Остальной код...
+            # Остальной код...
             # Получаем всех пользователей из базы данных
             res = supabase.table(USERS_TABLE)\
                 .select("user_id, payment_amount, username")\
