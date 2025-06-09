@@ -1142,7 +1142,7 @@ async def check_results():
 async def handle():
     """Основная функция обработки"""
     try:
-        await dp.start_polling(bot)
+        #await dp.start_polling(bot)
     except Exception as e:
         logger.error(f"Error in handle: {e}")
     finally:
