@@ -1068,7 +1068,19 @@ async def check_results():
         except Exception as e:
             logger.error(f"Critical error in check_results: {e}")
             await asyncio.sleep(30)
-
+async def start_web_server():
+    """Запускает простой веб-сервер для проверки работоспособности"""
+    try:
+        app = web.Application()
+        app.router.add_get('/', lambda request: web.Response(text="Bot is running"))
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, '0.0.0.0', PORT)
+        await site.start()
+        logger.info(f"Web server started on port {PORT}")
+    except Exception as e:
+        logger.error(f"Failed to start web server: {e}")
+        raise
 async def main():
     """Основная функция запуска бота"""
     try:
