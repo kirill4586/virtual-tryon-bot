@@ -71,7 +71,7 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
+    )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -641,7 +641,7 @@ async def handle_start(message: types.Message):
 async def add_clothes_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки 'Добавить одежду'"""
     try:
-        await callback_query.message.answer("📸 Пожалуйста, отправьте фото одежды")
+        await callback_query.message.answer("📸 Пожалуйста, отправьте фото одежды (используйте скрепку для загрузки файла)")
         await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in add_clothes_handler: {e}")
@@ -666,7 +666,7 @@ async def add_person_handler(callback_query: types.CallbackQuery):
         return
     
     try:
-        await callback_query.message.answer("📸 Пожалуйста, отправьте фото человека")
+        await callback_query.message.answer("📸 Пожалуйста, отправьте фото человека (используйте скрепку для загрузки файла)")
         await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in add_person_handler: {e}")
@@ -1021,6 +1021,48 @@ async def handle_photo(message: types.Message):
         
     except Exception as e:
         logger.error(f"Error handling photo: {e}")
+        await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
+
+@dp.message(F.document)
+async def handle_document(message: types.Message):
+    """Обработчик документов (для случаев, когда фото отправляются как документы)"""
+    user = message.from_user
+    user_id = user.id
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    
+    # Проверяем расширение файла
+    file_ext = os.path.splitext(message.document.file_name)[1].lower()
+    if file_ext not in SUPPORTED_EXTENSIONS:
+        await message.answer("❌ Поддерживаются только файлы с расширениями: .jpg, .jpeg, .png, .webp")
+        return
+    
+    try:
+        if user_id in FREE_USERS:
+            # Определяем тип фото (одежда или человек)
+            existing_photos = [
+                f for f in os.listdir(user_dir)
+                if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+            ]
+            photo_type = 1 if not existing_photos else 2
+            await process_photo(message, user, user_dir, photo_type)
+            return
+            
+        tries_left = await get_user_tries(user_id)
+        
+        if tries_left <= 0:
+            await show_payment_options(user)
+            return
+            
+        # Определяем тип фото (одежда или человек)
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+        photo_type = 1 if not existing_photos else 2
+        await process_photo(message, user, user_dir, photo_type)
+        
+    except Exception as e:
+        logger.error(f"Error handling document: {e}")
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
 async def show_payment_options(user: types.User):
