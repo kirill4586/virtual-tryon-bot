@@ -239,21 +239,16 @@ class SupabaseAPI:
                 payment_amount = data['payment_amount']
                 tries_left = int(payment_amount / PRICE_PER_TRY)
                 
-                # Обновляем доступ и количество попыток
-                await self.update_user_row(user_id, {
-                    ACCESS_FIELD: True,
-                    TRIES_FIELD: tries_left,
-                    STATUS_FIELD: "Оплачено"
-                })
-                
                 # Отправляем уведомления
                 try:
+                    # Уведомление пользователю
                     await bot.send_message(
                         user_id,
                         f"✅ Оплата {payment_amount} руб. подтверждена!\n"
                         f"🎁 Вам доступно: {tries_left} примерок"
                     )
                     
+                    # Уведомление администратору
                     if ADMIN_CHAT_ID:
                         await bot.send_message(
                             ADMIN_CHAT_ID,
@@ -262,6 +257,13 @@ class SupabaseAPI:
                         )
                 except Exception as e:
                     logger.error(f"Error sending payment notifications: {e}")
+                
+                # Обновляем доступ и количество попыток
+                await self.update_user_row(user_id, {
+                    ACCESS_FIELD: True,
+                    TRIES_FIELD: tries_left,
+                    STATUS_FIELD: "Оплачено"
+                })
             
             return result
         except Exception as e:
@@ -906,7 +908,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         # Проверяем, есть ли уже модель или первое фото
         model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
         first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
-        
+            
         # Если это второе фото и нет модели, но есть первое фото
         if photo_number == 2 and not model_selected and first_photo_exists:
             photo = message.photo[-1]
