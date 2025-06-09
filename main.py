@@ -866,7 +866,8 @@ async def show_payment_options(user: types.User):
         f"   - {price_per_try * 3} руб = 3 примерки и т.д.\n\n"
         "4. После оплаты нажмите кнопку <b>'Я оплатил'</b>"
     )
-	    await bot.send_message(
+    
+    await bot.send_message(
         user.id,
         payment_instructions,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
