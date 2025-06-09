@@ -27,6 +27,7 @@ from aiogram.client.default import DefaultBotProperties
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from aiohttp import web
+from supabase.lib.client_options import ClientOptions
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -74,10 +75,11 @@ bot = Bot(
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Инициализация Supabase
+# Инициализация Supabase с настройками для реального времени
 try:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-    logger.info("Supabase client initialized successfully")
+    client_options = ClientOptions(postgrest_client_timeout=None)
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
+    logger.info("Supabase client initialized successfully with realtime support")
     
     # Проверка существования таблицы пользователей
     try:
@@ -104,6 +106,7 @@ except Exception as e:
 class SupabaseAPI:
     def __init__(self):
         self.supabase = supabase
+        self.last_payment_amounts = {}  # Кэш последних значений платежей
 
     async def get_user_row(self, user_id: int):
         """Получение данных пользователя из Supabase"""
@@ -239,6 +242,9 @@ class SupabaseAPI:
                 payment_amount = data['payment_amount']
                 tries_left = int(payment_amount / PRICE_PER_TRY)
                 
+                # Обновляем кэш
+                self.last_payment_amounts[user_id] = payment_amount
+                
                 # Отправляем уведомления
                 try:
                     # Уведомление пользователю
@@ -281,6 +287,74 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Error resetting flags: {e}")
             return False
+
+    async def monitor_payment_changes(self):
+        """Мониторинг изменений в payment_amount с использованием Supabase Realtime"""
+        try:
+            # Подписываемся на изменения в таблице users
+            subscription = self.supabase.channel('payment_changes')\
+                .on('postgres_changes', {
+                    'event': 'UPDATE',
+                    'schema': 'public',
+                    'table': USERS_TABLE
+                }, self.handle_payment_change)\
+                .subscribe()
+            
+            logger.info("Started monitoring payment changes with Supabase Realtime")
+            return subscription
+        except Exception as e:
+            logger.error(f"Error setting up payment monitoring: {e}")
+            return None
+
+    async def handle_payment_change(self, payload):
+        """Обработчик изменений в payment_amount"""
+        try:
+            record = payload.get('record', {})
+            old_record = payload.get('old_record', {})
+            
+            user_id = int(record.get('user_id', 0))
+            if not user_id:
+                return
+
+            new_amount = float(record.get(AMOUNT_FIELD, 0))
+            old_amount = float(old_record.get(AMOUNT_FIELD, 0))
+            
+            # Проверяем, действительно ли изменилась сумма
+            if new_amount == old_amount:
+                return
+                
+            # Получаем текущие данные пользователя
+            user_row = await self.get_user_row(user_id)
+            if not user_row:
+                return
+                
+            username = user_row.get('username', '')
+            tries_left = int(new_amount / PRICE_PER_TRY)
+            
+            # Отправляем уведомления
+            try:
+                # Уведомление пользователю
+                await bot.send_message(
+                    user_id,
+                    f"💰 Ваш баланс обновлен!\n"
+                    f"💳 Текущая сумма: {new_amount} руб.\n"
+                    f"🎁 Доступно примерок: {tries_left}"
+                )
+                
+                # Уведомление администратору
+                if ADMIN_CHAT_ID:
+                    await bot.send_message(
+                        ADMIN_CHAT_ID,
+                        f"🔄 Изменение баланса у @{username} ({user_id})\n"
+                        f"📈 Было: {old_amount} руб.\n"
+                        f"📉 Стало: {new_amount} руб.\n"
+                        f"🎮 Доступно примерок: {tries_left}"
+                    )
+            except Exception as e:
+                logger.error(f"Error sending payment change notifications: {e}")
+                
+        except Exception as e:
+            logger.error(f"Error in handle_payment_change: {e}")
 
 supabase_api = SupabaseAPI()
 
@@ -834,140 +908,63 @@ async def show_payment_options(user: types.User):
         f"- 90 руб = 3 примерки\n"
         "и так далее..."
     )
-    
-    await bot.send_message(
-        user.id,
-        payment_instructions,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="🔄 Проверить доступ", 
-                    callback_data="check_access"
-                )
-            ]
-        ])
-    )
-    
-    await supabase_api.upsert_row(
-        user_id=user.id,
-        username=user.username or "",
-        data={
-            "status": "Ожидает оплаты",
-            "payment_status": "Не оплачено",
-            "last_payment_amount": 0,
-            "tries_left": 0,
-            "payment_requested": True,
-            "payment_confirmed": False
-        }
-    )
-
-@dp.callback_query(F.data == "check_access")
-async def check_access(callback_query: types.CallbackQuery):
-    """Проверка доступа после оплаты"""
-    user_id = callback_query.from_user.id
-    try:
-        row = await supabase_api.get_user_row(user_id)
-        if not row:
-            await callback_query.answer("❌ Ваши данные не найдены", show_alert=True)
-            return
+		
+		async def monitor_payment_changes_task():
+    """Фоновая задача для мониторинга изменений payment_amount"""
+    logger.info("Starting payment amount monitoring task...")
+    while True:
+        try:
+            # Получаем всех пользователей из базы данных
+            res = supabase.table(USERS_TABLE)\
+                .select("user_id, payment_amount, username")\
+                .execute()
             
-        if row.get(ACCESS_FIELD, False):
-            tries_left = row.get(TRIES_FIELD, 0)
-            amount = row.get(AMOUNT_FIELD, 0)
-            await callback_query.message.edit_text(
-                f"✅ Ваш доступ активен!\n"
-                f"💰 Оплачено: {amount} руб.\n"
-                f"🎁 Доступно примерок: {tries_left}\n\n"
-                "Теперь вы можете продолжить работу с ботом."
-            )
-        else:
-            await callback_query.message.edit_text(
-                "❌ Ваш платеж еще не подтвержден.\n"
-                "Пожалуйста, подождите или свяжитесь с администратором."
-            )
+            current_payments = {int(user['user_id']): float(user['payment_amount']) 
+                              for user in res.data if user.get('payment_amount')}
             
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error checking access: {e}")
-        await callback_query.answer("❌ Ошибка при проверке доступа", show_alert=True)
-
-async def process_photo(message: types.Message, user: types.User, user_dir: str):
-    """Обрабатывает загруженное фото"""
-    try:
-        existing_photos = [
-            f for f in os.listdir(user_dir)
-            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
-        ]
-        
-        photo_number = len(existing_photos) + 1
-        
-        if photo_number > 2:
-            await message.answer("✅ Вы уже загрузили 2 файла. Ожидайте результат.")
-            return
+            # Сравниваем с предыдущими значениями
+            for user_id, current_amount in current_payments.items():
+                previous_amount = supabase_api.last_payment_amounts.get(user_id, 0)
+                
+                if current_amount != previous_amount:
+                    # Обновляем кэш
+                    supabase_api.last_payment_amounts[user_id] = current_amount
+                    
+                    # Получаем данные пользователя
+                    user_row = await supabase_api.get_user_row(user_id)
+                    if not user_row:
+                        continue
+                    
+                    username = user_row.get('username', '')
+                    tries_left = int(current_amount / PRICE_PER_TRY)
+                    
+                    # Отправляем уведомления
+                    try:
+                        # Уведомление пользователю
+                        await bot.send_message(
+                            user_id,
+                            f"💰 Ваш баланс обновлен!\n"
+                            f"💳 Текущая сумма: {current_amount} руб.\n"
+                            f"🎁 Доступно примерок: {tries_left}"
+                        )
+                        
+                        # Уведомление администратору
+                        if ADMIN_CHAT_ID:
+                            await bot.send_message(
+                                ADMIN_CHAT_ID,
+                                f"🔄 Изменение баланса у @{username} ({user_id})\n"
+                                f"📈 Было: {previous_amount} руб.\n"
+                                f"📉 Стало: {current_amount} руб.\n"
+                                f"🎮 Доступно примерок: {tries_left}"
+                            )
+                    except Exception as e:
+                        logger.error(f"Error sending payment change notifications: {e}")
             
-        # Проверяем, есть ли уже модель или первое фото
-        model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
-        first_photo_exists = any(f.startswith("photo_1") for f in existing_photos)
+            await asyncio.sleep(10)  # Проверяем каждые 10 секунд
             
-        # Если это второе фото и нет модели, но есть первое фото
-        if photo_number == 2 and not model_selected and first_photo_exists:
-            photo = message.photo[-1]
-            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
-            file_name = f"photo_{photo_number}{file_ext}"
-            file_path = os.path.join(user_dir, file_name)
-            
-            await bot.download(photo, destination=file_path)
-            
-            # Загружаем фото в Supabase
-            await upload_to_supabase(file_path, user.id, "photos")
-            
-            # Уменьшаем количество попыток
-            if user.id not in FREE_USERS:
-                await supabase_api.decrement_tries(user.id)
-            
-            await supabase_api.upsert_row(user.id, user.username, {
-                "photo_person": True,
-                "status": "В обработке",
-                "photo1_received": True,
-                "photo2_received": True,
-                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
-            })
-            
-            await message.answer(
-                "✅ Оба файла получены.\n\n"
-                "🔄 Идёт примерка. Ожидайте результат!"
-            )
-            await notify_admin(f"📸 Новые фото от @{user.username} ({user.id})")
-            return
-            
-        # Если это первое фото
-        if photo_number == 1:
-            photo = message.photo[-1]
-            file_ext = os.path.splitext(photo.file_id)[1] or '.jpg'
-            file_name = f"photo_{photo_number}{file_ext}"
-            file_path = os.path.join(user_dir, file_name)
-            
-            await bot.download(photo, destination=file_path)
-            
-            # Загружаем фото в Supabase
-            await upload_to_supabase(file_path, user.id, "photos")
-            
-            await supabase_api.upsert_row(user.id, user.username, {
-                "photo_clothes": True,
-                "status": "Ожидается фото человека/модели",
-                "photo1_received": True,
-                "photo2_received": False
-            })
-            
-            response_text = (
-                "✅ Фото одежды получено.\n\n"
-                "Теперь выберите модель из меню или отправьте фото человека."
-            )
-            await message.answer(response_text)
-            
-    except Exception as e:
-        logger.error(f"Error processing photo: {e}")
-        await message.answer("❌ Ошибка при обработке файла. Попробуйте ещё раз.")
+        except Exception as e:
+            logger.error(f"Error in payment monitoring task: {e}")
+            await asyncio.sleep(30)  # При ошибке ждем дольше
 
 async def check_results():
     """Проверяет наличие результатов для отправки пользователям"""
@@ -1037,6 +1034,15 @@ async def check_results():
                             caption="🎉 Ваша виртуальная примерка готова!"
                         )
 
+                        # Уведомление администратору
+                        if ADMIN_CHAT_ID:
+                            user_row = await supabase_api.get_user_row(user_id)
+                            username = user_row.get('username', '') if user_row else ''
+                            await bot.send_message(
+                                ADMIN_CHAT_ID,
+                                f"✅ Пользователь @{username} ({user_id}) получил результат примерки"
+                            )
+
                         # Загружаем результат в Supabase с новым уникальным именем
                         try:
                             file_ext = os.path.splitext(result_file)[1].lower()
@@ -1047,8 +1053,8 @@ async def check_results():
                                     path=supabase_path,
                                     file=f,
                                     file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                              "image/png" if file_ext == '.png' else
-                                              "image/webp"}
+                                          "image/png" if file_ext == '.png' else
+                                          "image/webp"}
                                 )
                             logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
                         except Exception as upload_error:
@@ -1185,6 +1191,9 @@ async def main():
         
         # Запуск фоновой задачи проверки результатов
         asyncio.create_task(check_results())
+        
+        # Запуск мониторинга изменений payment_amount
+        asyncio.create_task(monitor_payment_changes_task())
         
         # Бесконечный цикл
         while True:
