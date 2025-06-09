@@ -24,6 +24,7 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from supabase import create_client, Client
 from dotenv import load_dotenv
 from aiohttp import web
@@ -57,7 +58,10 @@ SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
-PORT = int(os.getenv("PORT", 4000))
+WEB_SERVER_HOST = os.getenv("WEB_SERVER_HOST", "0.0.0.0")
+WEB_SERVER_PORT = int(os.getenv("PORT", 4000))
+WEBHOOK_PATH = "/webhook"
+BASE_WEBHOOK_URL = os.getenv("BASE_WEBHOOK_URL")
 
 # Названия полей в Supabase
 USERS_TABLE = "users"
@@ -71,7 +75,6 @@ PRICE_PER_TRY_FIELD = "price_per_try"  # Новая ячейка для хран
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -862,8 +865,7 @@ async def show_payment_options(user: types.User):
         f"   - {price_per_try * 3} руб = 3 примерки и т.д.\n\n"
         "4. После оплаты нажмите кнопку <b>'Я оплатил'</b>"
     )
-    
-    await bot.send_message(
+	    await bot.send_message(
         user.id,
         payment_instructions,
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -1139,59 +1141,63 @@ async def check_results():
             logger.error(f"Error in check_results: {e}")
             await asyncio.sleep(30)
 
-async def handle():
-    """Основная функция обработки"""
+async def setup_webhook():
+    """Настройка вебхука"""
     try:
-        #await dp.start_polling(bot)
+        # Удаляем предыдущий вебхук
+        await bot.delete_webhook()
+        
+        # Устанавливаем новый вебхук
+        await bot.set_webhook(
+            url=f"{BASE_WEBHOOK_URL}{WEBHOOK_PATH}",
+            drop_pending_updates=True
+        )
+        logger.info("Webhook set up successfully")
     except Exception as e:
-        logger.error(f"Error in handle: {e}")
-    finally:
-        await on_shutdown()
-
-async def health_check(request):
-    """Проверка здоровья сервера"""
-    return web.Response(text="OK")
-
-async def setup_web_server():
-    """Настройка веб-сервера"""
-    app = web.Application()
-    app.router.add_get('/health', health_check)
-    return app
-
-async def webhook_handler(request):
-    """Обработчик вебхуков"""
-    try:
-        data = await request.json()
-        logger.info(f"Webhook received: {data}")
-        return web.Response(text="OK")
-    except Exception as e:
-        logger.error(f"Error in webhook_handler: {e}")
-        return web.Response(status=400)
-
-async def start_web_server():
-    """Запуск веб-сервера"""
-    app = await setup_web_server()
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', PORT)
-    await site.start()
-    logger.info(f"Web server started on port {PORT}")
+        logger.error(f"Error setting up webhook: {e}")
+        raise
 
 async def main():
     """Основная функция"""
     try:
-        # Запускаем веб-сервер в фоне
-        asyncio.create_task(start_web_server())
+        # Настраиваем вебхук
+        await setup_webhook()
+        
+        # Создаем aiohttp приложение
+        app = web.Application()
+        app["bot"] = bot
+        
+        # Создаем обработчик вебхуков
+        webhook_requests_handler = SimpleRequestHandler(
+            dispatcher=dp,
+            bot=bot,
+        )
+        webhook_requests_handler.register(app, path=WEBHOOK_PATH)
+        
+        # Настраиваем приложение
+        setup_application(app, dp, bot=bot)
+        
+        # Запускаем веб-сервер
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host=WEB_SERVER_HOST, port=WEB_SERVER_PORT)
+        await site.start()
+        
+        logger.info(f"Web server started on {WEB_SERVER_HOST}:{WEB_SERVER_PORT}")
+        logger.info(f"Webhook URL: {BASE_WEBHOOK_URL}{WEBHOOK_PATH}")
         
         # Запускаем проверку результатов в фоне
         asyncio.create_task(check_results())
         
-        # Запускаем бота
-        await handle()
-        
+        # Бесконечный цикл для поддержания работы сервера
+        while True:
+            await asyncio.sleep(3600)  # Просто ждем, пока сервер работает
+            
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
+    finally:
+        await on_shutdown()
 
 if __name__ == "__main__":
     try:
