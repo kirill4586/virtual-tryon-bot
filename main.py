@@ -911,6 +911,8 @@ async def show_payment_options(user: types.User):
                     callback_data="check_access"
                 )
             ]
+        ])
+    )
 async def check_payment_changes():
     """Проверяет изменения в платежах и отправляет уведомления"""
     while True:
