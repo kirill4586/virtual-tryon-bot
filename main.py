@@ -71,7 +71,6 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -245,24 +244,31 @@ class SupabaseAPI:
                 # Обновляем кэш
                 self.last_payment_amounts[user_id] = payment_amount
                 
-                # Отправляем уведомления
-                try:
-                    # Уведомление пользователю
-                    await bot.send_message(
-                        user_id,
-                        f"✅ Оплата {payment_amount} руб. подтверждена!\n"
-                        f"🎁 Вам доступно: {tries_left} примерок"
-                    )
-                    
-                    # Уведомление администратору
-                    if ADMIN_CHAT_ID:
+                # Отправляем уведомления с задержкой для пользователя
+                async def send_user_notification():
+                    await asyncio.sleep(12)  # Задержка 12 секунд
+                    try:
+                        await bot.send_message(
+                            user_id,
+                            f"✅ Оплата {payment_amount} руб. подтверждена!\n"
+                            f"🎁 Вам доступно: {tries_left} примерок"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending payment notification to user: {e}")
+                
+                # Запускаем задачу с задержкой
+                asyncio.create_task(send_user_notification())
+                
+                # Уведомление администратору сразу
+                if ADMIN_CHAT_ID:
+                    try:
                         await bot.send_message(
                             ADMIN_CHAT_ID,
                             f"💰 Пользователь @{username} ({user_id}) "
                             f"оплатил {payment_amount} руб. Получено {tries_left} примерок."
                         )
-                except Exception as e:
-                    logger.error(f"Error sending payment notifications: {e}")
+                    except Exception as e:
+                        logger.error(f"Error sending admin payment notification: {e}")
                 
                 # Обновляем доступ и количество попыток
                 await self.update_user_row(user_id, {
@@ -331,18 +337,24 @@ class SupabaseAPI:
             username = user_row.get('username', '')
             tries_left = int(new_amount / PRICE_PER_TRY)
             
-            # Отправляем уведомления
-            try:
-                # Уведомление пользователю
-                await bot.send_message(
-                    user_id,
-                    f"💰 Ваш баланс обновлен!\n"
-                    f"💳 Текущая сумма: {new_amount} руб.\n"
-                    f"🎁 Доступно примерок: {tries_left}"
-                )
-                
-                # Уведомление администратору
-                if ADMIN_CHAT_ID:
+            # Отправляем уведомления с задержкой для пользователя
+            async def send_user_notification():
+                await asyncio.sleep(12)  # Задержка 12 секунд
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"💰 Ваш баланс обновлен!\n"
+                        f"💳 Текущая сумма: {new_amount} руб.\n"
+                        f"🎁 Доступно примерок: {tries_left}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending payment change notification to user: {e}")
+            
+            asyncio.create_task(send_user_notification())
+            
+            # Уведомление администратору сразу
+            if ADMIN_CHAT_ID:
+                try:
                     await bot.send_message(
                         ADMIN_CHAT_ID,
                         f"🔄 Изменение баланса у @{username} ({user_id})\n"
@@ -350,9 +362,9 @@ class SupabaseAPI:
                         f"📉 Стало: {new_amount} руб.\n"
                         f"🎮 Доступно примерок: {tries_left}"
                     )
-            except Exception as e:
-                logger.error(f"Error sending payment change notifications: {e}")
-                
+                except Exception as e:
+                    logger.error(f"Error sending admin payment change notification: {e}")
+                    
         except Exception as e:
             logger.error(f"Error in handle_payment_change: {e}")
 
@@ -895,7 +907,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             caption = "✅ Фото одежды получено. Теперь отправьте фото человека или выберите модель."
         else:
             # Второе фото - человек
-            photo_type = 2
+			photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
 
@@ -1184,18 +1196,24 @@ async def monitor_payment_changes_task():
                     username = user_row.get('username', '')
                     tries_left = int(current_amount / PRICE_PER_TRY)
                     
-                    # Отправляем уведомления
-                    try:
-                        # Уведомление пользователю
-                        await bot.send_message(
-                            user_id,
-                            f"💰 Ваш баланс обновлен!\n"
-                            f"💳 Текущая сумма: {current_amount} руб.\n"
-                            f"🎁 Доступно примерок: {tries_left}"
-                        )
-                        
-                        # Уведомление администратору
-                        if ADMIN_CHAT_ID:
+                    # Отправляем уведомления с задержкой для пользователя
+                    async def send_user_notification():
+                        await asyncio.sleep(12)  # Задержка 12 секунд
+                        try:
+                            await bot.send_message(
+                                user_id,
+                                f"💰 Ваш баланс обновлен!\n"
+                                f"💳 Текущая сумма: {current_amount} руб.\n"
+                                f"🎁 Доступно примерок: {tries_left}"
+                            )
+                        except Exception as e:
+                            logger.error(f"Error sending payment change notification to user: {e}")
+                    
+                    asyncio.create_task(send_user_notification())
+                    
+                    # Уведомление администратору сразу
+                    if ADMIN_CHAT_ID:
+                        try:
                             await bot.send_message(
                                 ADMIN_CHAT_ID,
                                 f"🔄 Изменение баланса у @{username} ({user_id})\n"
@@ -1203,8 +1221,8 @@ async def monitor_payment_changes_task():
                                 f"📉 Стало: {current_amount} руб.\n"
                                 f"🎮 Доступно примерок: {tries_left}"
                             )
-                    except Exception as e:
-                        logger.error(f"Error sending payment change notifications: {e}")
+                        except Exception as e:
+                            logger.error(f"Error sending admin payment change notification: {e}")
             
             await asyncio.sleep(10)  # Проверяем каждые 10 секунд
             
@@ -1294,3 +1312,6 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+			
+			
+			
