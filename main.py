@@ -587,8 +587,6 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         await send_initial_examples(user_id)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👕 Добавить одежду", callback_data="add_clothes")],
-            [InlineKeyboardButton(text="👤 Добавить человека", callback_data="add_person")],
             [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")],
             [InlineKeyboardButton(text="📸 Посмотреть примеры", callback_data="view_examples_0")]
         ])
@@ -600,7 +598,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "📌 <b>Как это работает:</b> \n\n"
             "1️⃣ Отправьте первое фото – одежда (отправляйте только 1 фото)\n"
             "2️⃣ Отправьте второе фото – человек (желательно в полный рост, 1 фото) или выберите готовую модель \n"
-            "👆 Фото прикрепляйте через скрепку или используйте кнопки ниже\n\n"
+            "👆 Фото прикрепляйте через скрепку, которая находится, где отправляете сообщения\n\n"
             "🌈 <b>Получите результат изображения виртуальной примерки!!</b> \n\n"
             "🔴 <b>Отправляйте по порядку сначала фото одежды, затем фото человека или выберите модель для примерки!!!</b> \n\n" 
             "🔔 Если хотите примерить верхнюю и нижнюю одежду, отправьте сначала фото (верхней или нижней одежды) выполните примерку - получите результат обработки, затем уже отправляйте 2-ое фото (верхней или нижней одежды) и результат первой обработки\n\n" 
@@ -636,42 +634,6 @@ async def handle_start(message: types.Message):
         message.from_user.username,
         message.from_user.full_name
     )
-
-@dp.callback_query(F.data == "add_clothes")
-async def add_clothes_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки 'Добавить одежду'"""
-    try:
-        await callback_query.message.answer("📸 Пожалуйста, отправьте фото одежды")
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in add_clothes_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "add_person")
-async def add_person_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки 'Добавить человека'"""
-    user_id = callback_query.from_user.id
-    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
-    
-    # Проверяем, есть ли уже фото одежды
-    clothes_photo_exists = any(
-        f.startswith("photo_1") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
-        for f in os.listdir(user_dir) if os.path.exists(user_dir)
-    )
-    
-    if not clothes_photo_exists:
-        await callback_query.message.answer("❌ Сначала отправьте фото одежды!")
-        await callback_query.answer()
-        return
-    
-    try:
-        await callback_query.message.answer("📸 Пожалуйста, отправьте фото человека")
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in add_person_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
-        await callback_query.answer()
 
 @dp.callback_query(F.data == "choose_model")
 async def choose_model(callback_query: types.CallbackQuery):
@@ -853,20 +815,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                     caption=response_text
                 )
                 
-                # Обновляем клавиатуру после выбора модели
-                keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="👕 Добавить одежду", callback_data="add_clothes")],
-                    [InlineKeyboardButton(text="👤 Добавить человека", callback_data="add_person")],
-                    [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")],
-                    [InlineKeyboardButton(text="📸 Посмотреть примеры", callback_data="view_examples_0")]
-                ])
-                
-                await bot.send_message(
-                    user_id,
-                    "Выберите следующее действие:",
-                    reply_markup=keyboard
-                )
-                
             except Exception as e:
                 logger.error(f"Error downloading model: {e}")
                 await bot.send_message(
@@ -921,7 +869,7 @@ async def more_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-async def process_photo(message: types.Message, user: types.User, user_dir: str, photo_type: int):
+async def process_photo(message: types.Message, user: types.User, user_dir: str):
     """Обработка и сохранение фотографии"""
     try:
         user_id = user.id
@@ -934,11 +882,20 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str,
         file = await bot.get_file(file_id)
         file_path = file.file_path
 
-        # Определяем имя файла в зависимости от типа
-        if photo_type == 1:
+        # Определяем тип фото (одежда или человек)
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+
+        if not existing_photos:
+            # Первое фото - одежда
+            photo_type = 1
             filename = f"photo_1{os.path.splitext(file_path)[1]}"
             caption = "✅ Фото одежды получено. Теперь отправьте фото человека или выберите модель."
         else:
+            # Второе фото - человек
+            photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
 
@@ -956,17 +913,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str,
                 "photo2_received": False,
                 "status": "Ожидается фото человека"
             })
-            
-            # Обновляем клавиатуру после загрузки одежды
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👤 Добавить человека", callback_data="add_person")],
-                [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")]
-            ])
-            
-            await message.answer(
-                "✅ Фото одежды получено. Выберите следующее действие:",
-                reply_markup=keyboard
-            )
         else:
             await supabase_api.upsert_row(user_id, user.username, {
                 "photo1_received": True,
@@ -979,7 +925,8 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str,
                 await supabase_api.decrement_tries(user_id)
 
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
-            await message.answer(caption)
+
+        await message.answer(caption)
 
     except Exception as e:
         logger.error(f"Error processing photo: {e}")
@@ -996,13 +943,7 @@ async def handle_photo(message: types.Message):
     
     try:
         if user_id in FREE_USERS:
-            # Определяем тип фото (одежда или человек)
-            existing_photos = [
-                f for f in os.listdir(user_dir)
-                if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
-            ]
-            photo_type = 1 if not existing_photos else 2
-            await process_photo(message, user, user_dir, photo_type)
+            await process_photo(message, user, user_dir)
             return
             
         tries_left = await get_user_tries(user_id)
@@ -1011,13 +952,7 @@ async def handle_photo(message: types.Message):
             await show_payment_options(user)
             return
             
-        # Определяем тип фото (одежда или человек)
-        existing_photos = [
-            f for f in os.listdir(user_dir)
-            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
-        ]
-        photo_type = 1 if not existing_photos else 2
-        await process_photo(message, user, user_dir, photo_type)
+        await process_photo(message, user, user_dir)
         
     except Exception as e:
         logger.error(f"Error handling photo: {e}")
