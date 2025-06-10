@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Это должен быть ID чата (число), а не username
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
@@ -58,6 +58,7 @@ SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
+DONATION_ALERTS_URL = f"https://www.donationalerts.com/r/{DONATION_ALERTS_TOKEN}"
 PORT = int(os.getenv("PORT", 4000))
 
 # Названия полей в Supabase
@@ -980,33 +981,37 @@ async def show_payment_options(user: types.User):
     payment_instructions = (
         "🚫 У вас закончились бесплатные примерки.\n\n"
         "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
-        "1. <b>Свяжитесь с администратором</b> для получения реквизитов оплаты.\n"
-        "2. После оплаты администратор вручную подтвердит ваш платеж.\n"
-        "3. Вы получите уведомление о подтверждении оплаты.\n\n"
         "💰 <b>Тарифы:</b>\n"
         f"- 30 руб = 1 примерка\n"
         f"- 60 руб = 2 примерки\n"
         f"- 90 руб = 3 примерки\n"
-        "и так далее..."
+        "и так далее...\n\n"
+        "👉 Нажмите кнопку <b>Оплатить</b> для перехода на страницу оплаты"
     )
     
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💳 Оплатить", url=DONATION_ALERTS_URL)],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    
     try:
-        # Проверяем, является ли ADMIN_CHAT_ID числовым ID или username
-        if ADMIN_CHAT_ID.isdigit():
-            admin_link = f"tg://user?id={ADMIN_CHAT_ID}"
-        else:
-            admin_link = f"https://t.me/{ADMIN_CHAT_ID.lstrip('@')}"
-        
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=admin_link)],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-        ])
-        
         await bot.send_message(
             user.id,
             payment_instructions,
             reply_markup=keyboard
         )
+        
+        # Уведомление администратору
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"💸 Пользователь @{user.username or 'без username'} ({user.id}) "
+                    f"перешел на страницу оплаты.\n"
+                    f"Ссылка: {DONATION_ALERTS_URL}"
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin payment notification: {e}")
     except Exception as e:
         logger.error(f"Error sending payment options: {e}")
 
