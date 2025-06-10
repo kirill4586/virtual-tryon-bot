@@ -215,32 +215,74 @@ class SupabaseAPI:
             return False
 
     async def upsert_row(self, user_id: int, username: str, data: dict):
-        """Создает или обновляет запись пользователя в Supabase"""
-        try:
-    row = await self.get_user_row(user_id)
+    """Создает или обновляет запись пользователя в Supabase"""
+    try:
+        row = await self.get_user_row(user_id)
 
-    data.update({
-        "user_id": str(user_id),
-        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-    })
+        data.update({
+            "user_id": str(user_id),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
 
-    if row:
-        res = self.supabase.table(USERS_TABLE)\
-            .update(data)\
-            .eq("user_id", str(user_id))\
-            .execute()
-        result = res.data[0] if res.data else None
-    else:
-        data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        data["username"] = username or ""
-        res = self.supabase.table(USERS_TABLE)\
-            .insert(data)\
-            .execute()
-        result = res.data[0] if res.data else None
+        if row:
+            res = self.supabase.table(USERS_TABLE)\
+                .update(data)\
+                .eq("user_id", str(user_id))\
+                .execute()
+            result = res.data[0] if res.data else None
+        else:
+            data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            data["username"] = username or ""
+            res = self.supabase.table(USERS_TABLE)\
+                .insert(data)\
+                .execute()
+            result = res.data[0] if res.data else None
 
-except Exception as e:
-    logger.error(f"Error in upsert_row: {e}")
-    return None
+        # Проверяем, была ли изменена сумма оплаты
+        if 'payment_amount' in data and data['payment_amount'] > 0:
+            payment_amount = data['payment_amount']
+            tries_left = int(payment_amount / PRICE_PER_TRY)
+            
+            # Обновляем кэш
+            self.last_payment_amounts[user_id] = payment_amount
+            
+            # Отправляем уведомления с задержкой для пользователя
+            async def send_user_notification():
+                await asyncio.sleep(12)  # Задержка 12 секунд
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"✅ Оплата {payment_amount} руб. подтверждена!\n"
+                        f"🎁 Вам доступно: {tries_left} примерок"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending payment notification to user: {e}")
+            
+            # Запускаем задачу с задержкой
+            asyncio.create_task(send_user_notification())
+            
+            # Уведомление администратору сразу
+            if ADMIN_CHAT_ID:
+                try:
+                    await bot.send_message(
+                        ADMIN_CHAT_ID,
+                        f"💰 Пользователь @{username} ({user_id}) "
+                        f"оплатил {payment_amount} руб. Получено {tries_left} примерок."
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending admin payment notification: {e}")
+            
+            # Обновляем доступ и количество попыток
+            await self.update_user_row(user_id, {
+                ACCESS_FIELD: True,
+                TRIES_FIELD: tries_left,
+                STATUS_FIELD: "Оплачено"
+            })
+        
+        return result
+    except Exception as e:
+        logger.error(f"Error in upsert_row: {e}")
+        return None
             else:
                 data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 res = self.supabase.table(USERS_TABLE)\
@@ -1324,3 +1366,6 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+			
+			
+			
