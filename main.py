@@ -217,26 +217,30 @@ class SupabaseAPI:
     async def upsert_row(self, user_id: int, username: str, data: dict):
         """Создает или обновляет запись пользователя в Supabase"""
         try:
-            row = await self.get_user_row(user_id)
+    row = await self.get_user_row(user_id)
 
-data.update({
-    "user_id": str(user_id),
-    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-})
+    data.update({
+        "user_id": str(user_id),
+        "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+    })
 
-if row:
-    res = self.supabase.table(USERS_TABLE)\
-        .update(data)\
-        .eq("user_id", str(user_id))\
-        .execute()
-    result = res.data[0] if res.data else None
-else:
-    data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
-    data["username"] = username or ""
-    res = self.supabase.table(USERS_TABLE)\
-        .insert(data)\
-        .execute()
-    result = res.data[0] if res.data else None
+    if row:
+        res = self.supabase.table(USERS_TABLE)\
+            .update(data)\
+            .eq("user_id", str(user_id))\
+            .execute()
+        result = res.data[0] if res.data else None
+    else:
+        data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        data["username"] = username or ""
+        res = self.supabase.table(USERS_TABLE)\
+            .insert(data)\
+            .execute()
+        result = res.data[0] if res.data else None
+
+except Exception as e:
+    logger.error(f"Error in upsert_row: {e}")
+    return None
             else:
                 data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 res = self.supabase.table(USERS_TABLE)\
@@ -1320,6 +1324,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-			
-			
-			
