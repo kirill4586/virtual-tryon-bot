@@ -24,7 +24,8 @@ from aiogram.types import (
 )
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from supabase import create_client, Client
+from supabase import create_client
+from supabase.lib.client_options import ClientOptions
 from dotenv import load_dotenv
 from aiohttp import web
 from supabase.lib.client_options import ClientOptions
@@ -299,22 +300,22 @@ class SupabaseAPI:
             return False
 
     async def monitor_payment_changes(self):
-        """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
-        try:
-            # Подписываемся на изменения в таблице users
-            subscription = self.supabase.channel('payment_changes')\
-                .on('postgres_changes', {
-                    'event': 'UPDATE',
-                    'schema': 'public',
-                    'table': USERS_TABLE
-                }, self.handle_db_change)\
-                .subscribe()
-            
-            logger.info("Started monitoring payment and status changes with Supabase Realtime")
-            return subscription
-        except Exception as e:
-            logger.error(f"Error setting up monitoring: {e}")
-            return None
+    """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
+    try:
+        # Подписываемся на изменения в таблице users
+        subscription = self.supabase.realtime.channel('payment_changes')\
+            .on('postgres_changes', {
+                'event': 'UPDATE',
+                'schema': 'public',
+                'table': USERS_TABLE
+            }, self.handle_db_change)\
+            .subscribe()
+        
+        logger.info("Started monitoring payment and status changes with Supabase Realtime")
+        return subscription
+    except Exception as e:
+        logger.error(f"Error setting up monitoring: {e}")
+        return None
 
     async def handle_db_change(self, payload):
         """Обработчик изменений в базе данных"""
