@@ -602,7 +602,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         await send_initial_examples(user_id)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")],
+            [InlineKeyboardButton(text="👕 Загрузить одежду", callback_data="upload_clothes")],
             [InlineKeyboardButton(text="📸 Посмотреть примеры", callback_data="view_examples_0")]
         ])
         
@@ -617,7 +617,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "🌈 <b>Получите результат изображения виртуальной примерки!!</b> \n\n"
             "🔴 <b>Отправляйте по порядку сначала фото одежды, затем фото человека или выберите модель для примерки!!!</b> \n\n" 
             "🔔 Если хотите примерить верхнюю и нижнюю одежду, отправьте сначала фото (верхней или нижней одежды) выполните примерку - получите результат обработки, затем уже отправляйте 2-ое фото (верхней или нижней одежды) и результат первой обработки\n\n" 
-            "📸 <b>ОТПРАВЬТЕ ПЕРВОЕ ФОТО (одежда), ЖДУ!!!:</b>",
+            "👇 Нажмите кнопку <b>'Загрузить одежду'</b> чтобы начать:",
             reply_markup=keyboard
         )
         
@@ -650,28 +650,58 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "choose_model")
-async def choose_model(callback_query: types.CallbackQuery):
-    """Выбор модели"""
-    if await is_processing(callback_query.from_user.id):
-        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-        return
-        
+@dp.callback_query(F.data == "upload_clothes")
+async def upload_clothes_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки одежды"""
     try:
+        await callback_query.message.answer(
+            "👕 Чтобы загрузить одежду, нажмите на Скрепку, "
+            "которая находится рядом с сообщением и загрузите изображение одежды для примерки."
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_clothes_handler: {e}")
+        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data == "upload_person")
+async def upload_person_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки фото человека"""
+    try:
+        await callback_query.message.answer(
+            "👤 Чтобы загрузить фото человека, нажмите на Скрепку, "
+            "которая находится рядом с сообщением и загрузите своё изображение для примерки."
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_person_handler: {e}")
+        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data == "continue_tryon")
+async def continue_tryon_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки продолжения примерки"""
+    try:
+        user_id = callback_query.from_user.id
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        
+        # Удаляем предыдущие файлы
+        if os.path.exists(user_dir):
+            shutil.rmtree(user_dir)
+        
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
-            [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
-            [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
+            [InlineKeyboardButton(text="👤 Загрузить фото человека", callback_data="upload_person")]
         ])
         
         await callback_query.message.answer(
-            "👇 Выберите категорию моделей:",
+            "🔄 Вы можете продолжить примерку. Отправьте фото человека или выберите модель.",
             reply_markup=keyboard
         )
-        
+        await callback_query.answer()
     except Exception as e:
-        logger.error(f"Error in choose_model: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
+        logger.error(f"Error in continue_tryon_handler: {e}")
+        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
+        await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("models_"))
 async def show_category_models(callback_query: types.CallbackQuery):
@@ -914,11 +944,14 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             # Первое фото - одежда
             photo_type = 1
             filename = f"photo_1{os.path.splitext(file_path)[1]}"
-            caption = "✅ Фото одежды получено. Теперь выберите модель или отправьте фото человека."
+            caption = "✅ Фото одежды получено. Теперь выберите модель или загрузите фото человека."
             
-            # Добавляем кнопку выбора модели после получения первого фото
+            # Добавляем кнопки после получения первого фото
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")]
+                [
+                    InlineKeyboardButton(text="👤 Загрузить фото человека", callback_data="upload_person"),
+                    InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
+                ]
             ])
         else:
             # Второе фото - человек
@@ -992,6 +1025,29 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         logger.error(f"Error handling photo: {e}")
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
+
+@dp.callback_query(F.data == "choose_model")
+async def choose_model(callback_query: types.CallbackQuery):
+    """Выбор модели"""
+    if await is_processing(callback_query.from_user.id):
+        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        return
+        
+    try:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
+            [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
+            [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
+        ])
+        
+        await callback_query.message.answer(
+            "👇 Выберите категорию моделей:",
+            reply_markup=keyboard
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in choose_model: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
@@ -1114,10 +1170,17 @@ async def check_results():
                         logger.info(f"📤 Отправляем результат для {user_id}")
 
                         photo = FSInputFile(result_file)
+                        
+                        # Добавляем кнопку "Продолжить примерку" после отправки результата
+                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                            [InlineKeyboardButton(text="🔄 Продолжить примерку", callback_data="continue_tryon")]
+                        ])
+                        
                         await bot.send_photo(
                             chat_id=user_id,
                             photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!"
+                            caption="🎉 Ваша виртуальная примерка готова!",
+                            reply_markup=keyboard
                         )
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
