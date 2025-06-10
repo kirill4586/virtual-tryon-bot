@@ -73,7 +73,7 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
+	)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -602,7 +602,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         await send_initial_examples(user_id)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👕 Загрузить одежду", callback_data="upload_clothes")],
+            [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")],
             [InlineKeyboardButton(text="📸 Посмотреть примеры", callback_data="view_examples_0")]
         ])
         
@@ -617,7 +617,7 @@ async def send_welcome(user_id: int, username: str, full_name: str):
             "🌈 <b>Получите результат изображения виртуальной примерки!!</b> \n\n"
             "🔴 <b>Отправляйте по порядку сначала фото одежды, затем фото человека или выберите модель для примерки!!!</b> \n\n" 
             "🔔 Если хотите примерить верхнюю и нижнюю одежду, отправьте сначала фото (верхней или нижней одежды) выполните примерку - получите результат обработки, затем уже отправляйте 2-ое фото (верхней или нижней одежды) и результат первой обработки\n\n" 
-            "👇 Нажмите кнопку <b>'Загрузить одежду'</b> чтобы начать:",
+            "📸 <b>ОТПРАВЬТЕ ПЕРВОЕ ФОТО (одежда), ЖДУ!!!:</b>",
             reply_markup=keyboard
         )
         
@@ -650,58 +650,28 @@ async def handle_start(message: types.Message):
         message.from_user.full_name
     )
 
-@dp.callback_query(F.data == "upload_clothes")
-async def upload_clothes_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки загрузки одежды"""
-    try:
-        await callback_query.message.answer(
-            "👕 Чтобы загрузить одежду, нажмите на Скрепку, "
-            "которая находится рядом с сообщением и загрузите изображение одежды для примерки."
-        )
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in upload_clothes_handler: {e}")
-        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "upload_person")
-async def upload_person_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки загрузки фото человека"""
-    try:
-        await callback_query.message.answer(
-            "👤 Чтобы загрузить фото человека, нажмите на Скрепку, "
-            "которая находится рядом с сообщением и загрузите своё изображение для примерки."
-        )
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in upload_person_handler: {e}")
-        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "continue_tryon")
-async def continue_tryon_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки продолжения примерки"""
-    try:
-        user_id = callback_query.from_user.id
-        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+@dp.callback_query(F.data == "choose_model")
+async def choose_model(callback_query: types.CallbackQuery):
+    """Выбор модели"""
+    if await is_processing(callback_query.from_user.id):
+        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        return
         
-        # Удаляем предыдущие файлы
-        if os.path.exists(user_dir):
-            shutil.rmtree(user_dir)
-        
+    try:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👤 Загрузить фото человека", callback_data="upload_person")]
+            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
+            [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
+            [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
         ])
         
         await callback_query.message.answer(
-            "🔄 Вы можете продолжить примерку. Отправьте фото человека или выберите модель.",
+            "👇 Выберите категорию моделей:",
             reply_markup=keyboard
         )
-        await callback_query.answer()
+        
     except Exception as e:
-        logger.error(f"Error in continue_tryon_handler: {e}")
-        await callback_query.message.answer("⚠️ Произошла ошибка. Попробуйте позже.")
-        await callback_query.answer()
+        logger.error(f"Error in choose_model: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
 
 @dp.callback_query(F.data.startswith("models_"))
 async def show_category_models(callback_query: types.CallbackQuery):
@@ -788,20 +758,13 @@ async def show_category_models(callback_query: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
-    user_id = callback_query.from_user.id
-    
-    # Проверяем количество оставшихся примерок
-    tries_left = await get_user_tries(user_id)
-    if tries_left <= 0 and user_id not in FREE_USERS:
-        await show_payment_options(callback_query.from_user)
-        return
-        
-    if await is_processing(user_id):
+    if await is_processing(callback_query.from_user.id):
         await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
         return
         
     model_path = callback_query.data.replace("model_", "")
     category, model_name = model_path.split('/')
+    user_id = callback_query.from_user.id
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
@@ -944,21 +907,12 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             # Первое фото - одежда
             photo_type = 1
             filename = f"photo_1{os.path.splitext(file_path)[1]}"
-            caption = "✅ Фото одежды получено. Теперь выберите модель или загрузите фото человека."
-            
-            # Добавляем кнопки после получения первого фото
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [
-                    InlineKeyboardButton(text="👤 Загрузить фото человека", callback_data="upload_person"),
-                    InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
-                ]
-            ])
+            caption = "✅ Фото одежды получено. Теперь отправьте фото человека или выберите модель."
         else:
             # Второе фото - человек
             photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
-            keyboard = None
 
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
@@ -991,10 +945,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             if user_id not in FREE_USERS:
                 await supabase_api.decrement_tries(user_id)
 
-        if keyboard:
-            await message.answer(caption, reply_markup=keyboard)
-        else:
-            await message.answer(caption)
+        await message.answer(caption)
 
     except Exception as e:
         logger.error(f"Error processing photo: {e}")
@@ -1026,68 +977,52 @@ async def handle_photo(message: types.Message):
         logger.error(f"Error handling photo: {e}")
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
-@dp.callback_query(F.data == "choose_model")
-async def choose_model(callback_query: types.CallbackQuery):
-    """Выбор модели"""
-    if await is_processing(callback_query.from_user.id):
-        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-        return
-        
-    try:
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
-            [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
-            [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
-        ])
-        
-        await callback_query.message.answer(
-            "👇 Выберите категорию моделей:",
-            reply_markup=keyboard
-        )
-        
-    except Exception as e:
-        logger.error(f"Error in choose_model: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
-
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
     try:
         # Формируем сообщение для DonationAlerts (username и ID)
-        payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
-        encoded_message = quote(payment_message)
+        payment_message = quote(f"Оплата за примерки от @{user.username} (ID: {user.id})")
         
-        # Создаем клавиатуру с кнопкой оплаты (только одна кнопка оплаты)
+        # Создаем клавиатуру с кнопкой оплаты
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить доступ",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
+                    text="💳 Оплатить 30 руб (1 примерка)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=30&message={payment_message}&fixed_amount=true"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🔙 Назад",
-                    callback_data="back_to_menu"
+                    text="💳 Оплатить 60 руб (2 примерки)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=60&message={payment_message}&fixed_amount=true"
                 )
-            ]
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 90 руб (3 примерки)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=90&message={payment_message}&fixed_amount=true"
+                )
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
         ])
         
         payment_text = (
             "🚫 У вас закончились бесплатные примерки.\n\n"
             "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
-            "1. Нажмите на кнопку 'Оплатить доступ'\n"
+            "1. Нажмите на кнопку с нужной суммой оплаты\n"
             "2. Вас перенаправит на страницу оплаты DonationAlerts\n"
             "3. После успешной оплаты доступ будет автоматически предоставлен\n\n"
-            f"⚠️ <b>Внимание!</b> В поле 'Сообщение' на странице оплаты должно быть указано:\n"
-            f"<code>Оплата за примерки от @{user.username} (ID: {user.id})</code>\n\n"
-            "Не изменяйте это сообщение, иначе оплата не будет засчитана!"
+            "💰 <b>Тарифы:</b>\n"
+            "- 30 руб = 1 примерка\n"
+            "- 60 руб = 2 примерки\n"
+            "- 90 руб = 3 примерки\n\n"
+            "⚠️ <b>Внимание!</b> Не изменяйте автоматически подставленные username и ID в сообщении!"
         )
         
         await bot.send_message(
             user.id,
             payment_text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
+            reply_markup=keyboard
         )
         
         # Уведомление администратору о начале оплаты
@@ -1096,7 +1031,7 @@ async def show_payment_options(user: types.User):
                 await bot.send_message(
                     ADMIN_CHAT_ID,
                     f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
-                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
+                    f"ℹ️ Перешел по ссылке DonationAlerts"
                 )
             except Exception as e:
                 logger.error(f"Error sending admin payment notification: {e}")
@@ -1170,22 +1105,15 @@ async def check_results():
                         logger.info(f"📤 Отправляем результат для {user_id}")
 
                         photo = FSInputFile(result_file)
-                        
-                        # Добавляем кнопку "Продолжить примерку" после отправки результата
-                        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="🔄 Продолжить примерку", callback_data="continue_tryon")]
-                        ])
-                        
                         await bot.send_photo(
                             chat_id=user_id,
                             photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!",
-                            reply_markup=keyboard
+                            caption="🎉 Ваша виртуальная примерка готова!"
                         )
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
                         user_row = await supabase_api.get_user_row(user_id)
-                        current_username = user_row.get('username', '') if user_row.get('username') else ''
+                        current_username = user_row.get('username', '') if user_row else ''
 
                         # Уведомление администратору
                         if ADMIN_CHAT_ID:
