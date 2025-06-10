@@ -218,18 +218,25 @@ class SupabaseAPI:
         """Создает или обновляет запись пользователя в Supabase"""
         try:
             row = await self.get_user_row(user_id)
-            data.update({
-                "user_id": str(user_id),
-                "username": username or "",
-                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
-            })
 
-            if row:
-                res = self.supabase.table(USERS_TABLE)\
-                    .update(data)\
-                    .eq("user_id", str(user_id))\
-                    .execute()
-                result = res.data[0] if res.data else None
+data.update({
+    "user_id": str(user_id),
+    "updated_at": time.strftime("%Y-%m-%d %H:%M:%S")
+})
+
+if row:
+    res = self.supabase.table(USERS_TABLE)\
+        .update(data)\
+        .eq("user_id", str(user_id))\
+        .execute()
+    result = res.data[0] if res.data else None
+else:
+    data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    data["username"] = username or ""
+    res = self.supabase.table(USERS_TABLE)\
+        .insert(data)\
+        .execute()
+    result = res.data[0] if res.data else None
             else:
                 data["created_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
                 res = self.supabase.table(USERS_TABLE)\
