@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # Конфигурация
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")  # Это должен быть ID чата (число), а не username
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
@@ -990,12 +990,18 @@ async def show_payment_options(user: types.User):
         "и так далее..."
     )
     
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=f"https://t.me/{ADMIN_CHAT_ID}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-    ])
-    
     try:
+        # Проверяем, является ли ADMIN_CHAT_ID числовым ID или username
+        if ADMIN_CHAT_ID.isdigit():
+            admin_link = f"tg://user?id={ADMIN_CHAT_ID}"
+        else:
+            admin_link = f"https://t.me/{ADMIN_CHAT_ID.lstrip('@')}"
+        
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=admin_link)],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        ])
+        
         await bot.send_message(
             user.id,
             payment_instructions,
