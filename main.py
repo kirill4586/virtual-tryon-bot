@@ -28,6 +28,7 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from aiohttp import web
 from supabase.lib.client_options import ClientOptions
+from urllib.parse import quote
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -59,6 +60,7 @@ MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
 PORT = int(os.getenv("PORT", 4000))
+DONATION_ALERTS_USERNAME = "primerochnay777"  # Имя пользователя DonationAlerts
 
 # Названия полей в Supabase
 USERS_TABLE = "users"
@@ -71,7 +73,6 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -976,33 +977,70 @@ async def handle_photo(message: types.Message):
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
 async def show_payment_options(user: types.User):
-    """Показывает варианты оплаты"""
-    payment_instructions = (
-        "🚫 У вас закончились бесплатные примерки.\n\n"
-        "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
-        "1. <b>Свяжитесь с администратором</b> для получения реквизитов оплаты.\n"
-        "2. После оплаты администратор вручную подтвердит ваш платеж.\n"
-        "3. Вы получите уведомление о подтверждении оплаты.\n\n"
-        "💰 <b>Тарифы:</b>\n"
-        f"- 30 руб = 1 примерка\n"
-        f"- 60 руб = 2 примерки\n"
-        f"- 90 руб = 3 примерки\n"
-        "и так далее..."
-    )
-    
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=f"https://t.me/{ADMIN_CHAT_ID}")],
-        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
-    ])
-    
+    """Показывает варианты оплаты через DonationAlerts"""
     try:
+        # Формируем сообщение для DonationAlerts (username и ID)
+        payment_message = quote(f"Оплата за примерки от @{user.username} (ID: {user.id})")
+        
+        # Создаем клавиатуру с кнопкой оплаты
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 30 руб (1 примерка)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=30&message={payment_message}&fixed_amount=true"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 60 руб (2 примерки)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=60&message={payment_message}&fixed_amount=true"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить 90 руб (3 примерки)",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=90&message={payment_message}&fixed_amount=true"
+                )
+            ],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+        ])
+        
+        payment_text = (
+            "🚫 У вас закончились бесплатные примерки.\n\n"
+            "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
+            "1. Нажмите на кнопку с нужной суммой оплаты\n"
+            "2. Вас перенаправит на страницу оплаты DonationAlerts\n"
+            "3. После успешной оплаты доступ будет автоматически предоставлен\n\n"
+            "💰 <b>Тарифы:</b>\n"
+            "- 30 руб = 1 примерка\n"
+            "- 60 руб = 2 примерки\n"
+            "- 90 руб = 3 примерки\n\n"
+            "⚠️ <b>Внимание!</b> Не изменяйте автоматически подставленные username и ID в сообщении!"
+        )
+        
         await bot.send_message(
             user.id,
-            payment_instructions,
+            payment_text,
             reply_markup=keyboard
         )
+        
+        # Уведомление администратору о начале оплаты
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
+                    f"ℹ️ Перешел по ссылке DonationAlerts"
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin payment notification: {e}")
+                
     except Exception as e:
         logger.error(f"Error sending payment options: {e}")
+        await bot.send_message(
+            user.id,
+            "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
+        )
 
 async def check_results():
     """Проверяет наличие результатов для отправки пользователям"""
