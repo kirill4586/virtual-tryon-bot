@@ -991,7 +991,7 @@ async def show_payment_options(user: types.User):
     )
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/primerochnay777?amount={amount}&message={message}&fixed_amount=true")],
+        [InlineKeyboardButton(text="💳 Оплатить", url=f"https://t.me/{ADMIN_CHAT_ID}")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     
