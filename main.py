@@ -955,44 +955,24 @@ async def show_payment_options(user: types.User):
             "Не изменяйте это сообщение, иначе оплата не будет засчитана!"
         )
         
-        msg = await bot.send_message(
+        await bot.send_message(
             user.id,
             payment_text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
         
-        # Сохраняем ID сообщения с кнопкой оплаты
-        payment_message_id = msg.message_id
-        
-        # Ожидаем нажатия кнопки оплаты
-        try:
-            await asyncio.wait_for(
-                dp.wait_for(
-                    types.CallbackQuery.filter(
-                        F.from_user.id == user.id,
-                        F.message.message_id == payment_message_id
-                    ),
-                    timeout=300  # 5 минут ожидания
-                ),
-                timeout=300
-            )
-            
-            # Уведомление администратору только после нажатия кнопки оплаты
-            if ADMIN_CHAT_ID:
-                try:
-                    await bot.send_message(
-                        ADMIN_CHAT_ID,
-                        f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
-                        f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin payment notification: {e}")
-                    
-        except (asyncio.TimeoutError, asyncio.CancelledError):
-            # Пользователь не нажал кнопку в течение 5 минут
-            logger.info(f"User {user.id} didn't press payment button within timeout")
-            
+        # Уведомление администратору
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
+                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin payment notification: {e}")
+                
     except Exception as e:
         logger.error(f"Error sending payment options: {e}")
         await bot.send_message(
