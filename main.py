@@ -81,7 +81,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Инициализация Supabase с настройками для реального времени
 try:
     client_options = ClientOptions(postgrest_client_timeout=None)
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
     logger.info("Supabase client initialized successfully with realtime support")
     
     # Проверка существования таблицы пользователей
@@ -300,22 +300,22 @@ class SupabaseAPI:
             return False
 
     async def monitor_payment_changes(self):
-    """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
-    try:
-        # Подписываемся на изменения в таблице users
-        subscription = self.supabase.realtime.channel('payment_changes')\
-            .on('postgres_changes', {
-                'event': 'UPDATE',
-                'schema': 'public',
-                'table': USERS_TABLE
-            }, self.handle_db_change)\
-            .subscribe()
-        
-        logger.info("Started monitoring payment and status changes with Supabase Realtime")
-        return subscription
-    except Exception as e:
-        logger.error(f"Error setting up monitoring: {e}")
-        return None
+        """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
+        try:
+            # Подписываемся на изменения в таблице users
+            subscription = self.supabase.realtime.channel('payment_changes')\
+                .on('postgres_changes', {
+                    'event': 'UPDATE',
+                    'schema': 'public',
+                    'table': USERS_TABLE
+                }, self.handle_db_change)\
+                .subscribe()
+            
+            logger.info("Started monitoring payment and status changes with Supabase Realtime")
+            return subscription
+        except Exception as e:
+            logger.error(f"Error setting up monitoring: {e}")
+            return None
 
     async def handle_db_change(self, payload):
         """Обработчик изменений в базе данных"""
