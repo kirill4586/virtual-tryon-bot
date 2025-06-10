@@ -981,26 +981,27 @@ async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
     try:
         # Формируем сообщение для DonationAlerts (username и ID)
-        payment_message = quote(f"Оплата за примерки от @{user.username} (ID: {user.id})")
+        payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
+        encoded_message = quote(payment_message)
         
         # Создаем клавиатуру с кнопкой оплаты
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить 30 руб (1 примерка)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=30&message={payment_message}&fixed_amount=true"
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=30&message={encoded_message}&fixed_amount=true"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить 60 руб (2 примерки)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=60&message={payment_message}&fixed_amount=true"
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=60&message={encoded_message}&fixed_amount=true"
                 )
             ],
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить 90 руб (3 примерки)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=90&message={payment_message}&fixed_amount=true"
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=90&message={encoded_message}&fixed_amount=true"
                 )
             ],
             [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
@@ -1016,7 +1017,7 @@ async def show_payment_options(user: types.User):
             "- 30 руб = 1 примерка\n"
             "- 60 руб = 2 примерки\n"
             "- 90 руб = 3 примерки\n\n"
-            "⚠️ <b>Внимание!</b> Не изменяйте автоматически подставленные username и ID в сообщении!"
+            f"⚠️ <b>Внимание!</b> Не изменяйте автоматически подставленные username (@{user.username}) и ID ({user.id}) в сообщении!"
         )
         
         await bot.send_message(
