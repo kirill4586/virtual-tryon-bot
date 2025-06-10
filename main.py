@@ -1017,13 +1017,16 @@ async def show_payment_options(user: types.User):
             "- 30 руб = 1 примерка\n"
             "- 60 руб = 2 примерки\n"
             "- 90 руб = 3 примерки\n\n"
-            f"⚠️ <b>Внимание!</b> Не изменяйте автоматически подставленные username (@{user.username}) и ID ({user.id}) в сообщении!"
+            f"⚠️ <b>Внимание!</b> В поле 'Сообщение' на странице оплаты должно быть указано:\n"
+            f"<code>Оплата за примерки от @{user.username} (ID: {user.id})</code>\n\n"
+            "Не изменяйте это сообщение, иначе оплата не будет засчитана!"
         )
         
         await bot.send_message(
             user.id,
             payment_text,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
         
         # Уведомление администратору о начале оплаты
@@ -1032,7 +1035,7 @@ async def show_payment_options(user: types.User):
                 await bot.send_message(
                     ADMIN_CHAT_ID,
                     f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
-                    f"ℹ️ Перешел по ссылке DonationAlerts"
+                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
                 )
             except Exception as e:
                 logger.error(f"Error sending admin payment notification: {e}")
