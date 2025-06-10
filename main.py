@@ -71,7 +71,7 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
+    )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -921,13 +921,13 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
         # Обновляем статус в базе данных
         if photo_type == 1:
-            await supabase_api.upsert_row(user_id, user.username, {
+            await supabase_api.upsert_row(user_id, user.username if user.username else "", {
                 "photo1_received": True,
                 "photo2_received": False,
                 "status": "Ожидается фото человека"
             })
         else:
-            await supabase_api.upsert_row(user_id, user.username, {
+            await supabase_api.upsert_row(user_id, user.username if user.username else "", {
                 "photo1_received": True,
                 "photo2_received": True,
                 "status": "В обработке",
@@ -936,8 +936,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
             if user_id not in FREE_USERS:
                 await supabase_api.decrement_tries(user_id)
-
-            await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
 
         await message.answer(caption)
 
@@ -1194,7 +1192,7 @@ async def monitor_payment_changes_task():
                     if not user_row:
                         continue
                     
-                    username = user_row.get('username', '')
+                    username = user_row.get('username', '') if user_row.get('username') else ''
                     tries_left = int(current_amount / PRICE_PER_TRY)
                     
                     # Отправляем уведомления с задержкой для пользователя
@@ -1313,6 +1311,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-			
-			
-			
