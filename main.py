@@ -73,7 +73,7 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
+    )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -758,13 +758,20 @@ async def show_category_models(callback_query: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
-    if await is_processing(callback_query.from_user.id):
+    user_id = callback_query.from_user.id
+    
+    # Проверяем количество оставшихся примерок
+    tries_left = await get_user_tries(user_id)
+    if tries_left <= 0 and user_id not in FREE_USERS:
+        await show_payment_options(callback_query.from_user)
+        return
+        
+    if await is_processing(user_id):
         await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
         return
         
     model_path = callback_query.data.replace("model_", "")
     category, model_name = model_path.split('/')
-    user_id = callback_query.from_user.id
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
@@ -907,12 +914,18 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             # Первое фото - одежда
             photo_type = 1
             filename = f"photo_1{os.path.splitext(file_path)[1]}"
-            caption = "✅ Фото одежды получено. Теперь отправьте фото человека или выберите модель."
+            caption = "✅ Фото одежды получено. Теперь выберите модель или отправьте фото человека."
+            
+            # Добавляем кнопку выбора модели после получения первого фото
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")]
+            ])
         else:
             # Второе фото - человек
             photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
+            keyboard = None
 
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
@@ -945,7 +958,10 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             if user_id not in FREE_USERS:
                 await supabase_api.decrement_tries(user_id)
 
-        await message.answer(caption)
+        if keyboard:
+            await message.answer(caption, reply_markup=keyboard)
+        else:
+            await message.answer(caption)
 
     except Exception as e:
         logger.error(f"Error processing photo: {e}")
@@ -984,39 +1000,28 @@ async def show_payment_options(user: types.User):
         payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
         encoded_message = quote(payment_message)
         
-        # Создаем клавиатуру с кнопкой оплаты
+        # Создаем клавиатуру с кнопкой оплаты (только одна кнопка оплаты)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить 30 руб (1 примерка)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=30&message={encoded_message}&fixed_amount=true"
+                    text="💳 Оплатить доступ",
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить 60 руб (2 примерки)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=60&message={encoded_message}&fixed_amount=true"
+                    text="🔙 Назад",
+                    callback_data="back_to_menu"
                 )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="💳 Оплатить 90 руб (3 примерки)",
-                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?amount=90&message={encoded_message}&fixed_amount=true"
-                )
-            ],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+            ]
         ])
         
         payment_text = (
             "🚫 У вас закончились бесплатные примерки.\n\n"
             "📌 <b>Для продолжения работы необходимо оплатить услугу:</b>\n\n"
-            "1. Нажмите на кнопку с нужной суммой оплаты\n"
+            "1. Нажмите на кнопку 'Оплатить доступ'\n"
             "2. Вас перенаправит на страницу оплаты DonationAlerts\n"
             "3. После успешной оплаты доступ будет автоматически предоставлен\n\n"
-            "💰 <b>Тарифы:</b>\n"
-            "- 30 руб = 1 примерка\n"
-            "- 60 руб = 2 примерки\n"
-            "- 90 руб = 3 примерки\n\n"
             f"⚠️ <b>Внимание!</b> В поле 'Сообщение' на странице оплаты должно быть указано:\n"
             f"<code>Оплата за примерки от @{user.username} (ID: {user.id})</code>\n\n"
             "Не изменяйте это сообщение, иначе оплата не будет засчитана!"
@@ -1117,7 +1122,7 @@ async def check_results():
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
                         user_row = await supabase_api.get_user_row(user_id)
-                        current_username = user_row.get('username', '') if user_row else ''
+                        current_username = user_row.get('username', '') if user_row.get('username') else ''
 
                         # Уведомление администратору
                         if ADMIN_CHAT_ID:
