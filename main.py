@@ -301,9 +301,9 @@ class SupabaseAPI:
 
     async def monitor_payment_changes(self):
         """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
-        try:
+		try:
         # Подписываемся на изменения в таблице users
-        subscription = self.supabase.realtime.channel('payment_changes')\
+		subscription = self.supabase.realtime.channel('payment_changes')\
             .on('postgres_changes', {
                 'event': 'UPDATE',
                 'schema': 'public',
