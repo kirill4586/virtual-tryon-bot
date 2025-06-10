@@ -919,19 +919,25 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         # Загружаем фото в Supabase
         await upload_to_supabase(local_path, user_id, "photos")
 
-        # Обновляем статус в базе данных
+        # Получаем текущие данные пользователя, чтобы сохранить username
+        user_row = await supabase_api.get_user_row(user_id)
+        current_username = user_row.get('username', '') if user_row else (user.username or '')
+
+        # Обновляем статус в базе данных, сохраняя username
         if photo_type == 1:
-            await supabase_api.upsert_row(user_id, user.username if user.username else "", {
+            await supabase_api.upsert_row(user_id, current_username, {
                 "photo1_received": True,
                 "photo2_received": False,
-                "status": "Ожидается фото человека"
+                "status": "Ожидается фото человека",
+                "username": current_username  # Явно сохраняем username
             })
         else:
-            await supabase_api.upsert_row(user_id, user.username if user.username else "", {
+            await supabase_api.upsert_row(user_id, current_username, {
                 "photo1_received": True,
                 "photo2_received": True,
                 "status": "В обработке",
-                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "username": current_username  # Явно сохраняем username
             })
 
             if user_id not in FREE_USERS:
@@ -1066,14 +1072,19 @@ async def check_results():
                             caption="🎉 Ваша виртуальная примерка готова!"
                         )
 
+                        # Получаем текущие данные пользователя, чтобы сохранить username
+                        user_row = await supabase_api.get_user_row(user_id)
+                        current_username = user_row.get('username', '') if user_row else ''
+
                         # Уведомление администратору
                         if ADMIN_CHAT_ID:
-                            user_row = await supabase_api.get_user_row(user_id)
-                            username = user_row.get('username', '') if user_row else ''
-                            await bot.send_message(
-                                ADMIN_CHAT_ID,
-                                f"✅ Пользователь @{username} ({user_id}) получил результат примерки"
-                            )
+                            try:
+                                await bot.send_message(
+                                    ADMIN_CHAT_ID,
+                                    f"✅ Пользователь @{current_username} ({user_id}) получил результат примерки"
+                                )
+                            except Exception as e:
+                                logger.error(f"Error sending admin notification: {e}")
 
                         # Загружаем результат в Supabase с новым уникальным именем
                         try:
@@ -1092,13 +1103,14 @@ async def check_results():
                         except Exception as upload_error:
                             logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
 
-                        # Обновляем Supabase
+                        # Обновляем Supabase, сохраняя username
                         try:
-                            await supabase_api.upsert_row(user_id, "", {
+                            await supabase_api.upsert_row(user_id, current_username, {
                                 "status": "Результат отправлен",
                                 "result_sent": True,
                                 "ready": True,
-                                "result_url": supabase_path if 'supabase_path' in locals() else None
+                                "result_url": supabase_path if 'supabase_path' in locals() else None,
+                                "username": current_username  # Явно сохраняем username
                             })
                         except Exception as db_error:
                             logger.error(f"❌ Ошибка обновления Supabase: {db_error}")
