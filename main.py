@@ -109,6 +109,7 @@ class SupabaseAPI:
     def __init__(self):
         self.supabase = supabase
         self.last_payment_amounts = {}  # Кэш последних значений платежей
+        self.last_statuses = {}  # Кэш последних статусов
 
     async def get_user_row(self, user_id: int):
         """Получение данных пользователя из Supabase"""
@@ -298,7 +299,7 @@ class SupabaseAPI:
             return False
 
     async def monitor_payment_changes(self):
-        """Мониторинг изменений в payment_amount с использованием Supabase Realtime"""
+        """Мониторинг изменений в payment_amount и статусах с использованием Supabase Realtime"""
         try:
             # Подписываемся на изменения в таблице users
             subscription = self.supabase.channel('payment_changes')\
@@ -306,17 +307,17 @@ class SupabaseAPI:
                     'event': 'UPDATE',
                     'schema': 'public',
                     'table': USERS_TABLE
-                }, self.handle_payment_change)\
+                }, self.handle_db_change)\
                 .subscribe()
             
-            logger.info("Started monitoring payment changes with Supabase Realtime")
+            logger.info("Started monitoring payment and status changes with Supabase Realtime")
             return subscription
         except Exception as e:
-            logger.error(f"Error setting up payment monitoring: {e}")
+            logger.error(f"Error setting up monitoring: {e}")
             return None
 
-    async def handle_payment_change(self, payload):
-        """Обработчик изменений в payment_amount"""
+    async def handle_db_change(self, payload):
+        """Обработчик изменений в базе данных"""
         try:
             record = payload.get('record', {})
             old_record = payload.get('old_record', {})
@@ -325,19 +326,53 @@ class SupabaseAPI:
             if not user_id:
                 return
 
+            # Обработка изменений статуса
+            new_status = record.get(STATUS_FIELD, "")
+            old_status = old_record.get(STATUS_FIELD, "")
+            
+            if new_status != old_status:
+                await self.handle_status_change(user_id, new_status, old_status, record)
+                
+            # Обработка изменений суммы оплаты
             new_amount = float(record.get(AMOUNT_FIELD, 0))
             old_amount = float(old_record.get(AMOUNT_FIELD, 0))
             
-            # Проверяем, действительно ли изменилась сумма
-            if new_amount == old_amount:
-                return
+            if new_amount != old_amount:
+                await self.handle_payment_change(user_id, new_amount, old_amount, record)
+
+        except Exception as e:
+            logger.error(f"Error in handle_db_change: {e}")
+
+    async def handle_status_change(self, user_id: int, new_status: str, old_status: str, record: dict):
+        """Обработчик изменений статуса"""
+        try:
+            username = record.get('username', '')
+            
+            # Если статус изменился на "Клиент оплачивает"
+            if new_status == "Клиент оплачивает":
+                logger.info(f"User {user_id} started payment process")
                 
-            # Получаем текущие данные пользователя
-            user_row = await self.get_user_row(user_id)
-            if not user_row:
-                return
+                # Уведомление администратору
+                if ADMIN_CHAT_ID:
+                    try:
+                        await bot.send_message(
+                            ADMIN_CHAT_ID,
+                            f"💳 Пользователь @{username} ({user_id}) начал процесс оплаты\n"
+                            f"🔄 Статус изменен на: {new_status}"
+                        )
+                    except Exception as e:
+                        logger.error(f"Error sending admin status notification: {e}")
                 
-            username = user_row.get('username', '')
+                # Обновляем кэш статусов
+                self.last_statuses[user_id] = new_status
+                
+        except Exception as e:
+            logger.error(f"Error in handle_status_change: {e}")
+
+    async def handle_payment_change(self, user_id: int, new_amount: float, old_amount: float, record: dict):
+        """Обработчик изменений суммы оплаты"""
+        try:
+            username = record.get('username', '')
             tries_left = int(new_amount / PRICE_PER_TRY)
             
             # Отправляем уведомления с задержкой для пользователя
@@ -368,6 +403,9 @@ class SupabaseAPI:
                 except Exception as e:
                     logger.error(f"Error sending admin payment change notification: {e}")
                     
+            # Обновляем кэш платежей
+            self.last_payment_amounts[user_id] = new_amount
+            
         except Exception as e:
             logger.error(f"Error in handle_payment_change: {e}")
 
@@ -1000,6 +1038,11 @@ async def show_payment_options(user: types.User):
         payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
         encoded_message = quote(payment_message)
         
+        # Обновляем статус в базе данных
+        await supabase_api.upsert_row(user.id, user.username, {
+            "status": "Клиент оплачивает"
+        })
+        
         # Создаем клавиатуру с кнопкой оплаты (только одна кнопка оплаты)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -1034,17 +1077,6 @@ async def show_payment_options(user: types.User):
             parse_mode=ParseMode.HTML
         )
         
-        # Уведомление администратору о начале оплаты
-        if ADMIN_CHAT_ID:
-            try:
-                await bot.send_message(
-                    ADMIN_CHAT_ID,
-                    f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
-                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
-                )
-            except Exception as e:
-                logger.error(f"Error sending admin payment notification: {e}")
-                
     except Exception as e:
         logger.error(f"Error sending payment options: {e}")
         await bot.send_message(
@@ -1226,68 +1258,17 @@ async def check_results():
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-async def monitor_payment_changes_task():
-    """Фоновая задача для мониторинга изменений payment_amount"""
-    logger.info("Starting payment amount monitoring task...")
-    while True:
-        try:
-            # Получаем всех пользователей из базы данных
-            res = supabase.table(USERS_TABLE)\
-                .select("user_id, payment_amount, username")\
-                .execute()
-            
-            current_payments = {int(user['user_id']): float(user['payment_amount']) 
-                              for user in res.data if user.get('payment_amount')}
-            
-            # Сравниваем с предыдущими значениями
-            for user_id, current_amount in current_payments.items():
-                previous_amount = supabase_api.last_payment_amounts.get(user_id, 0)
-                
-                if current_amount != previous_amount:
-                    # Обновляем кэш
-                    supabase_api.last_payment_amounts[user_id] = current_amount
-                    
-                    # Получаем данные пользователя
-                    user_row = await supabase_api.get_user_row(user_id)
-                    if not user_row:
-                        continue
-                    
-                    username = user_row.get('username', '') if user_row.get('username') else ''
-                    tries_left = int(current_amount / PRICE_PER_TRY)
-                    
-                    # Отправляем уведомления с задержкой для пользователя
-                    async def send_user_notification():
-                        await asyncio.sleep(12)  # Задержка 12 секунд
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                f"💰 Ваш баланс обновлен!\n"
-                                f"💳 Текущая сумма: {current_amount} руб.\n"
-                                f"🎁 Доступно примерок: {tries_left}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending payment change notification to user: {e}")
-                    
-                    asyncio.create_task(send_user_notification())
-                    
-                    # Уведомление администратору сразу
-                    if ADMIN_CHAT_ID:
-                        try:
-                            await bot.send_message(
-                                ADMIN_CHAT_ID,
-                                f"🔄 Изменение баланса у @{username} ({user_id})\n"
-                                f"📈 Было: {previous_amount} руб.\n"
-                                f"📉 Стало: {current_amount} руб.\n"
-                                f"🎮 Доступно примерок: {tries_left}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending admin payment change notification: {e}")
-            
-            await asyncio.sleep(10)  # Проверяем каждые 10 секунд
-            
-        except Exception as e:
-            logger.error(f"Error in payment monitoring task: {e}")
-            await asyncio.sleep(30)  # При ошибке ждем дольше
+async def start_realtime_monitoring():
+    """Запуск мониторинга изменений в реальном времени"""
+    try:
+        # Подключаемся к Supabase Realtime для мониторинга изменений
+        subscription = await supabase_api.monitor_payment_changes()
+        if subscription:
+            logger.info("✅ Realtime monitoring started successfully")
+        else:
+            logger.error("❌ Failed to start realtime monitoring")
+    except Exception as e:
+        logger.error(f"Error starting realtime monitoring: {e}")
 
 async def handle(request):
     """Обработчик корневого запроса"""
@@ -1344,8 +1325,8 @@ async def main():
         # Запуск фоновой задачи проверки результатов
         asyncio.create_task(check_results())
         
-        # Запуск мониторинга изменений payment_amount
-        asyncio.create_task(monitor_payment_changes_task())
+        # Запуск мониторинга изменений в реальном времени
+        await start_realtime_monitoring()
         
         # Бесконечный цикл
         while True:
