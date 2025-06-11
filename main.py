@@ -72,7 +72,7 @@ STATUS_FIELD = "status"
 # Инициализация клиентов
 bot = Bot(
     token=BOT_TOKEN,
-    default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -909,15 +909,6 @@ async def model_selected(callback_query: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in model_selected: {e}")
         await bot.send_message(
-                    user_id,
-                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
-                )
-                await callback_query.answer()
-                return
-            
-    except Exception as e:
-        logger.error(f"Error in model_selected: {e}")
-        await bot.send_message(
             user_id,
             "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
         )
@@ -944,7 +935,7 @@ async def back_to_menu(callback_query: types.CallbackQuery):
             callback_query.from_user.username,
             callback_query.from_user.full_name
         )
-        await callback_query.answer()  # <- Эта строка должна быть на том же уровне, что и await send_welcome
+        await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in back_to_menu: {e}")
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
