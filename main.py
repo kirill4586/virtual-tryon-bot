@@ -80,9 +80,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Инициализация Supabase с настройками для реального времени
 try:
     client_options = ClientOptions(postgrest_client_timeout=None)
-    from supabase import create_client as create_async_client
-    supabase = create_async_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
-    logger.info("Supabase client initialized successfully with realtime support")
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
+    logger.info("Supabase client initialized successfully")
     
     # Проверка существования таблицы пользователей
     try:
@@ -93,14 +92,18 @@ try:
         raise Exception("Users table not found in Supabase")
     
     # Проверка бакетов хранилища
-    buckets = supabase.storage.list_buckets()
-    logger.info(f"Available buckets: {buckets}")
-    
-    required_buckets = [MODELS_BUCKET, EXAMPLES_BUCKET, UPLOADS_BUCKET]
-    for bucket in required_buckets:
-        if bucket not in [b.name for b in buckets]:
-            logger.error(f"Bucket '{bucket}' not found in Supabase storage")
-            raise Exception(f"Required bucket '{bucket}' not found")
+    try:
+        buckets = supabase.storage.list_buckets()
+        logger.info(f"Available buckets: {buckets}")
+        
+        required_buckets = [MODELS_BUCKET, EXAMPLES_BUCKET, UPLOADS_BUCKET]
+        for bucket in required_buckets:
+            if bucket not in [b['name'] for b in buckets]:
+                logger.error(f"Bucket '{bucket}' not found in Supabase storage")
+                raise Exception(f"Required bucket '{bucket}' not found")
+    except Exception as e:
+        logger.error(f"Error checking buckets: {e}")
+        raise
 
 except Exception as e:
     logger.error(f"Failed to initialize Supabase: {e}")
@@ -313,71 +316,6 @@ class SupabaseAPI:
         except Exception as e:
             logger.error(f"Error resetting flags: {e}")
             return False
-
-    async def monitor_payment_changes(self):
-        """Мониторинг изменений в payment_amount с использованием Supabase Realtime"""
-        try:
-            # Подписываемся на изменения в таблице users
-            subscription = self.supabase.channel('payment_changes')\
-                .on('postgres_changes', {
-                    'event': 'UPDATE',
-                    'schema': 'public',
-                    'table': USERS_TABLE
-                }, self.handle_payment_change)\
-                .subscribe()
-            
-            logger.info("Started monitoring payment changes with Supabase Realtime")
-            return subscription
-        except Exception as e:
-            logger.error(f"Error setting up payment monitoring: {e}")
-            return None
-
-    async def handle_payment_change(self, payload):
-        """Обработчик изменений в payment_amount"""
-        try:
-            record = payload.get('record', {})
-            old_record = payload.get('old_record', {})
-            
-            user_id = int(record.get('user_id', 0))
-            if not user_id:
-                return
-
-            new_amount = float(record.get(AMOUNT_FIELD, 0))
-            old_amount = float(old_record.get(AMOUNT_FIELD, 0))
-            
-            # Проверяем, действительно ли изменилась сумма
-            if new_amount == old_amount:
-                return
-                
-            # Получаем текущие данные пользователя
-            user_row = await self.get_user_row(user_id)
-            if not user_row:
-                return
-                
-            username = user_row.get('username', '')
-            tries_left = int(new_amount / PRICE_PER_TRY)
-            
-            # Обновляем кэш
-            self.last_payment_amounts[user_id] = new_amount
-            self.last_tries_values[user_id] = tries_left
-            
-            # Отправляем уведомления
-            await self.send_payment_update_notifications(
-                user_id, 
-                new_amount, 
-                tries_left, 
-                "Изменение баланса"
-            )
-            
-            # Обновляем доступ и количество попыток
-            await self.update_user_row(user_id, {
-                ACCESS_FIELD: True if new_amount > 0 else False,
-                TRIES_FIELD: tries_left,
-                STATUS_FIELD: "Оплачено" if new_amount > 0 else "Не оплачено"
-            })
-                    
-        except Exception as e:
-            logger.error(f"Error in handle_payment_change: {e}")
 
     async def initialize_user(self, user_id: int, username: str):
         """Инициализирует пользователя в базе данных без начального баланса"""
@@ -1488,9 +1426,6 @@ async def main():
         
         # Запуск мониторинга изменений payment_amount
         asyncio.create_task(monitor_payment_changes_task())
-        
-        # Запуск мониторинга изменений через Supabase Realtime
-        await supabase_api.monitor_payment_changes()
         
         # Бесконечный цикл
         while True:
