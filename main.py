@@ -935,7 +935,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu"))
+@dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -944,7 +944,7 @@ async def back_to_menu(callback_query: types.CallbackQuery):
             callback_query.from_user.username,
             callback_query.from_user.full_name
         )
-        await callback_query.answer()
+        await callback_query.answer()  # <- Эта строка должна быть на том же уровне, что и await send_welcome
     except Exception as e:
         logger.error(f"Error in back_to_menu: {e}")
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
