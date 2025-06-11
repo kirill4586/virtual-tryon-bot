@@ -50,7 +50,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
-FREE_USERS = {6320348591}  # Пользователи с бесплатным доступом
+FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "primery"
@@ -73,7 +73,6 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-    )
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -109,6 +108,7 @@ class SupabaseAPI:
     def __init__(self):
         self.supabase = supabase
         self.last_payment_amounts = {}  # Кэш последних значений платежей
+        self.last_tries_values = {}     # Кэш последних значений примерок
 
     async def get_user_row(self, user_id: int):
         """Получение данных пользователя из Supabase"""
@@ -199,22 +199,54 @@ class SupabaseAPI:
 
             updated = await self.update_user_row(user_id, update_data)
             
-            # Отправляем уведомление пользователю о списании
+            # Отправляем уведомления о списании
             if updated:
-                try:
-                    await bot.send_message(
-                        user_id,
-                        f"✅ Примерка использована. Осталось примерок: {new_tries}\n"
-                        f"Остаток на счету: {new_amount} руб."
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending tries update to user: {e}")
+                await self.send_payment_update_notifications(user_id, new_amount, new_tries, "Списание за примерку")
             
             return updated is not None
 
         except Exception as e:
             logger.error(f"Error decrementing tries: {e}")
             return False
+
+    async def send_payment_update_notifications(self, user_id: int, new_amount: float, new_tries: int, reason: str):
+        """Отправляет уведомления об изменении баланса"""
+        try:
+            # Получаем данные пользователя
+            user_row = await self.get_user_row(user_id)
+            if not user_row:
+                return
+
+            username = user_row.get('username', '')
+            
+            # Уведомление пользователю (если это не первая бесплатная примерка)
+            if user_id not in FREE_USERS or new_amount > 0:
+                try:
+                    await bot.send_message(
+                        user_id,
+                        f"💰 Ваш баланс обновлен!\n"
+                        f"📝 Причина: {reason}\n"
+                        f"💳 Текущая сумма: {new_amount} руб.\n"
+                        f"🎁 Доступно примерок: {new_tries}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending payment update to user: {e}")
+
+            # Уведомление администратору
+            if ADMIN_CHAT_ID:
+                try:
+                    await bot.send_message(
+                        ADMIN_CHAT_ID,
+                        f"🔄 Изменение баланса у @{username} ({user_id})\n"
+                        f"📝 Причина: {reason}\n"
+                        f"💰 Текущая сумма: {new_amount} руб.\n"
+                        f"🎮 Доступно примерок: {new_tries}"
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending admin payment notification: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error in send_payment_update_notifications: {e}")
 
     async def upsert_row(self, user_id: int, username: str, data: dict):
         """Создает или обновляет запись пользователя в Supabase"""
@@ -246,32 +278,15 @@ class SupabaseAPI:
                 
                 # Обновляем кэш
                 self.last_payment_amounts[user_id] = payment_amount
+                self.last_tries_values[user_id] = tries_left
                 
-                # Отправляем уведомления с задержкой для пользователя
-                async def send_user_notification():
-                    await asyncio.sleep(12)  # Задержка 12 секунд
-                    try:
-                        await bot.send_message(
-                            user_id,
-                            f"✅ Оплата {payment_amount} руб. подтверждена!\n"
-                            f"🎁 Вам доступно: {tries_left} примерок"
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending payment notification to user: {e}")
-                
-                # Запускаем задачу с задержкой
-                asyncio.create_task(send_user_notification())
-                
-                # Уведомление администратору сразу
-                if ADMIN_CHAT_ID:
-                    try:
-                        await bot.send_message(
-                            ADMIN_CHAT_ID,
-                            f"💰 Пользователь @{username} ({user_id}) "
-                            f"оплатил {payment_amount} руб. Получено {tries_left} примерок."
-                        )
-                    except Exception as e:
-                        logger.error(f"Error sending admin payment notification: {e}")
+                # Отправляем уведомления
+                await self.send_payment_update_notifications(
+                    user_id, 
+                    payment_amount, 
+                    tries_left, 
+                    "Пополнение баланса"
+                )
                 
                 # Обновляем доступ и количество попыток
                 await self.update_user_row(user_id, {
@@ -340,36 +355,54 @@ class SupabaseAPI:
             username = user_row.get('username', '')
             tries_left = int(new_amount / PRICE_PER_TRY)
             
-            # Отправляем уведомления с задержкой для пользователя
-            async def send_user_notification():
-                await asyncio.sleep(12)  # Задержка 12 секунд
-                try:
-                    await bot.send_message(
-                        user_id,
-                        f"💰 Ваш баланс обновлен!\n"
-                        f"💳 Текущая сумма: {new_amount} руб.\n"
-                        f"🎁 Доступно примерок: {tries_left}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending payment change notification to user: {e}")
+            # Обновляем кэш
+            self.last_payment_amounts[user_id] = new_amount
+            self.last_tries_values[user_id] = tries_left
             
-            asyncio.create_task(send_user_notification())
+            # Отправляем уведомления
+            await self.send_payment_update_notifications(
+                user_id, 
+                new_amount, 
+                tries_left, 
+                "Изменение баланса"
+            )
             
-            # Уведомление администратору сразу
-            if ADMIN_CHAT_ID:
-                try:
-                    await bot.send_message(
-                        ADMIN_CHAT_ID,
-                        f"🔄 Изменение баланса у @{username} ({user_id})\n"
-                        f"📈 Было: {old_amount} руб.\n"
-                        f"📉 Стало: {new_amount} руб.\n"
-                        f"🎮 Доступно примерок: {tries_left}"
-                    )
-                except Exception as e:
-                    logger.error(f"Error sending admin payment change notification: {e}")
+            # Обновляем доступ и количество попыток
+            await self.update_user_row(user_id, {
+                ACCESS_FIELD: True if new_amount > 0 else False,
+                TRIES_FIELD: tries_left,
+                STATUS_FIELD: "Оплачено" if new_amount > 0 else "Не оплачено"
+            })
                     
         except Exception as e:
             logger.error(f"Error in handle_payment_change: {e}")
+
+    async def initialize_user(self, user_id: int, username: str):
+        """Инициализирует пользователя с начальным балансом"""
+        try:
+            # Проверяем, есть ли уже пользователь в базе
+            user_row = await self.get_user_row(user_id)
+            
+            # Если пользователя нет или у него нулевой баланс, инициализируем
+            if not user_row or (user_row.get(AMOUNT_FIELD, 0) == 0 and user_id not in FREE_USERS):
+                initial_amount = 30.0  # Начальный баланс 30 руб.
+                tries_left = int(initial_amount / PRICE_PER_TRY)  # 1 примерка
+                
+                await self.upsert_row(user_id, username, {
+                    AMOUNT_FIELD: initial_amount,
+                    TRIES_FIELD: tries_left,
+                    ACCESS_FIELD: True,
+                    STATUS_FIELD: "Оплачено"
+                })
+                
+                # Обновляем кэш
+                self.last_payment_amounts[user_id] = initial_amount
+                self.last_tries_values[user_id] = tries_left
+                
+                logger.info(f"Initialized user {user_id} with {initial_amount} rub and {tries_left} tries")
+            
+        except Exception as e:
+            logger.error(f"Error initializing user: {e}")
 
 supabase_api = SupabaseAPI()
 
@@ -598,6 +631,9 @@ async def notify_admin(message: str):
 async def send_welcome(user_id: int, username: str, full_name: str):
     """Отправка приветственного сообщения"""
     try:
+        # Инициализируем пользователя (если нужно)
+        await supabase_api.initialize_user(user_id, username)
+        
         # Отправляем первые три примера
         await send_initial_examples(user_id)
         
@@ -872,6 +908,15 @@ async def model_selected(callback_query: types.CallbackQuery):
     except Exception as e:
         logger.error(f"Error in model_selected: {e}")
         await bot.send_message(
+                    user_id,
+                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
+                )
+                await callback_query.answer()
+                return
+            
+    except Exception as e:
+        logger.error(f"Error in model_selected: {e}")
+        await bot.send_message(
             user_id,
             "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
         )
@@ -889,7 +934,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu")
+@dp.callback_query(F.data == "back_to_menu"))
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -999,7 +1044,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
 
-@dp.callback_query(F.data == "upload_person")
+@dp.callback_query(F.data == "upload_person"))
 async def upload_person_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки загрузки фото человека"""
     try:
@@ -1279,7 +1324,7 @@ async def check_results():
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-@dp.callback_query(F.data == "continue_tryon")
+@dp.callback_query(F.data == "continue_tryon"))
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
@@ -1312,8 +1357,12 @@ async def monitor_payment_changes_task():
                 previous_amount = supabase_api.last_payment_amounts.get(user_id, 0)
                 
                 if current_amount != previous_amount:
+                    # Рассчитываем количество примерок
+                    tries_left = int(current_amount / PRICE_PER_TRY)
+                    
                     # Обновляем кэш
                     supabase_api.last_payment_amounts[user_id] = current_amount
+                    supabase_api.last_tries_values[user_id] = tries_left
                     
                     # Получаем данные пользователя
                     user_row = await supabase_api.get_user_row(user_id)
@@ -1321,35 +1370,22 @@ async def monitor_payment_changes_task():
                         continue
                     
                     username = user_row.get('username', '') if user_row.get('username') else ''
-                    tries_left = int(current_amount / PRICE_PER_TRY)
                     
-                    # Отправляем уведомления с задержкой для пользователя
-                    async def send_user_notification():
-                        await asyncio.sleep(12)  # Задержка 12 секунд
-                        try:
-                            await bot.send_message(
-                                user_id,
-                                f"💰 Ваш баланс обновлен!\n"
-                                f"💳 Текущая сумма: {current_amount} руб.\n"
-                                f"🎁 Доступно примерок: {tries_left}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending payment change notification to user: {e}")
+                    # Обновляем доступ и количество попыток
+                    await supabase_api.update_user_row(user_id, {
+                        ACCESS_FIELD: True if current_amount > 0 else False,
+                        TRIES_FIELD: tries_left,
+                        STATUS_FIELD: "Оплачено" if current_amount > 0 else "Не оплачено"
+                    })
                     
-                    asyncio.create_task(send_user_notification())
-                    
-                    # Уведомление администратору сразу
-                    if ADMIN_CHAT_ID:
-                        try:
-                            await bot.send_message(
-                                ADMIN_CHAT_ID,
-                                f"🔄 Изменение баланса у @{username} ({user_id})\n"
-                                f"📈 Было: {previous_amount} руб.\n"
-                                f"📉 Стало: {current_amount} руб.\n"
-                                f"🎮 Доступно примерок: {tries_left}"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending admin payment change notification: {e}")
+                    # Отправляем уведомления только если это не первая бесплатная примерка
+                    if current_amount > 0 or previous_amount > 0:
+                        await supabase_api.send_payment_update_notifications(
+                            user_id,
+                            current_amount,
+                            tries_left,
+                            "Изменение баланса"
+                        )
             
             await asyncio.sleep(10)  # Проверяем каждые 10 секунд
             
@@ -1414,6 +1450,9 @@ async def main():
         
         # Запуск мониторинга изменений payment_amount
         asyncio.create_task(monitor_payment_changes_task())
+        
+        # Запуск мониторинга изменений через Supabase Realtime
+        await supabase_api.monitor_payment_changes()
         
         # Бесконечный цикл
         while True:
