@@ -50,7 +50,7 @@ ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
-FREE_USERS = {6320348591, 973853935}  # Пользователи с бесплатным доступом
+FREE_USERS = {6320348591}  # Пользователи с бесплатным доступом
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "primery"
@@ -73,7 +73,6 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -104,10 +103,6 @@ try:
     except Exception as e:
         logger.error(f"Error checking buckets: {e}")
         raise
-
-except Exception as e:
-    logger.error(f"Failed to initialize Supabase: {e}")
-    raise
 
 except Exception as e:
     logger.error(f"Failed to initialize Supabase: {e}")
@@ -248,8 +243,8 @@ class SupabaseAPI:
                         ADMIN_CHAT_ID,
                         f"🔄 Изменение баланса у @{username} ({user_id})\n"
                         f"📝 Причина: {reason}\n"
-                        f"💰 Текущая сумма: {new_amount} руб.\n"
-                        f"🎮 Доступно примерок: {new_tries}"
+					    f"💳 Текущая сумма: {new_amount} руб.\n"
+                        f"🎁 Доступно примерок: {new_tries}"
                     )
                 except Exception as e:
                     logger.error(f"Error sending admin payment notification: {e}")
@@ -1184,18 +1179,34 @@ async def check_results():
                         logger.info(f"📤 Отправляем результат для {user_id}")
 
                         photo = FSInputFile(result_file)
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!",
-                            reply_markup=InlineKeyboardMarkup(
-                                inline_keyboard=[[
+                        
+                        # Создаем клавиатуру с кнопками
+                        keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
                                     InlineKeyboardButton(
                                         text="🔄 Продолжить примерку",
                                         callback_data="continue_tryon"
                                     )
-                                ]]
-                            )
+                                ],
+                                [
+                                    InlineKeyboardButton(
+                                        text="💳 Оплатить доступ",
+                                        callback_data="show_payment_options"
+                                    ),
+                                    InlineKeyboardButton(
+                                        text="💰 Проверить баланс",
+                                        callback_data="check_balance"
+                                    )
+                                ]
+                            ]
+                        )
+
+                        await bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption="🎉 Ваша виртуальная примерка готова!",
+                            reply_markup=keyboard
                         )
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
@@ -1316,6 +1327,17 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in continue_tryon_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data == "show_payment_options")
+async def show_payment_options_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки показа вариантов оплаты"""
+    try:
+        await show_payment_options(callback_query.from_user)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in show_payment_options_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
