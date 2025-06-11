@@ -1076,7 +1076,7 @@ async def show_payment_options(user: types.User):
                     callback_data="check_balance"
                 )
             ],
-            [п
+            [
                 InlineKeyboardButton(
                     text="🔙 Назад",
                     callback_data="back_to_menu"
