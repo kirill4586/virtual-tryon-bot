@@ -80,7 +80,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 # Инициализация Supabase с настройками для реального времени
 try:
     client_options = ClientOptions(postgrest_client_timeout=None)
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
+    from supabase import create_client as create_async_client
+    supabase = create_async_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
     logger.info("Supabase client initialized successfully with realtime support")
     
     # Проверка существования таблицы пользователей
