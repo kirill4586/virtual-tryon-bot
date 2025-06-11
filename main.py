@@ -1068,6 +1068,41 @@ async def handle_photo(message: types.Message):
         logger.error(f"Error handling photo: {e}")
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
+async def show_balance_info(user: types.User):
+    """Показывает информацию о балансе пользователя"""
+    try:
+        # Получаем данные пользователя из Supabase
+        user_row = await supabase_api.get_user_row(user.id)
+        
+        if not user_row:
+            await bot.send_message(user.id, "❌ Ваши данные не найдены. Пожалуйста, начните с команды /start")
+            return
+            
+        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
+        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row.get(TRIES_FIELD) else 0
+        status = user_row.get(STATUS_FIELD, "Неизвестно")
+        
+        message_text = (
+            "💰 <b>Ваш баланс:</b>\n\n"
+            f"💳 Сумма на счету: <b>{payment_amount} руб.</b>\n"
+            f"🎁 Доступно примерок: <b>{tries_left}</b>\n"
+            f"📊 Статус: <b>{status}</b>\n\n"
+            f"ℹ️ Стоимость одной примерки: <b>{PRICE_PER_TRY} руб.</b>"
+        )
+        
+        await bot.send_message(
+            user.id,
+            message_text,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Error showing balance info: {e}")
+        await bot.send_message(
+            user.id,
+            "❌ Ошибка при получении информации о балансе. Попробуйте позже."
+        )
+
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
     try:
@@ -1075,12 +1110,18 @@ async def show_payment_options(user: types.User):
         payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
         encoded_message = quote(payment_message)
         
-        # Создаем клавиатуру с кнопкой оплаты (только одна кнопка оплаты)
+        # Создаем клавиатуру с кнопкой оплаты и проверки баланса
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить доступ",
                     url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Проверить баланс",
+                    callback_data="check_balance"
                 )
             ],
             [
@@ -1126,6 +1167,17 @@ async def show_payment_options(user: types.User):
             user.id,
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
+
+@dp.callback_query(F.data == "check_balance")
+async def check_balance_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки проверки баланса"""
+    try:
+        await show_balance_info(callback_query.from_user)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in check_balance_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при проверке баланса. Попробуйте позже.")
+        await callback_query.answer()
 
 async def check_results():
     """Проверяет наличие результатов для отправки пользователям"""
