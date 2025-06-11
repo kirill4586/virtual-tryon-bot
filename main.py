@@ -92,18 +92,21 @@ try:
         raise Exception("Users table not found in Supabase")
     
     # Проверка бакетов хранилища
-    # Проверка бакетов хранилища
-try:
-    buckets = supabase.storage.list_buckets()
-    logger.info(f"Available buckets: {buckets}")
-    
-    required_buckets = [MODELS_BUCKET, EXAMPLES_BUCKET, UPLOADS_BUCKET]
-    for bucket in required_buckets:
-        if bucket not in [b.name for b in buckets]:
-            logger.error(f"Bucket '{bucket}' not found in Supabase storage")
-            raise Exception(f"Required bucket '{bucket}' not found")
+    try:
+        buckets = supabase.storage.list_buckets()
+        logger.info(f"Available buckets: {buckets}")
+        
+        required_buckets = [MODELS_BUCKET, EXAMPLES_BUCKET, UPLOADS_BUCKET]
+        for bucket in required_buckets:
+            if bucket not in [b.name for b in buckets]:
+                logger.error(f"Bucket '{bucket}' not found in Supabase storage")
+                raise Exception(f"Required bucket '{bucket}' not found")
+    except Exception as e:
+        logger.error(f"Error checking buckets: {e}")
+        raise
+
 except Exception as e:
-    logger.error(f"Error checking buckets: {e}")
+    logger.error(f"Failed to initialize Supabase: {e}")
     raise
 
 except Exception as e:
