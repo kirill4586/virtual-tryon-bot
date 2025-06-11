@@ -73,7 +73,6 @@ STATUS_FIELD = "status"
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-)
 dp = Dispatcher(storage=MemoryStorage())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
@@ -379,28 +378,21 @@ class SupabaseAPI:
             logger.error(f"Error in handle_payment_change: {e}")
 
     async def initialize_user(self, user_id: int, username: str):
-        """Инициализирует пользователя с начальным балансом"""
+        """Инициализирует пользователя в базе данных без начального баланса"""
         try:
             # Проверяем, есть ли уже пользователь в базе
             user_row = await self.get_user_row(user_id)
             
-            # Если пользователя нет или у него нулевой баланс, инициализируем
-            if not user_row or (user_row.get(AMOUNT_FIELD, 0) == 0 and user_id not in FREE_USERS):
-                initial_amount = 30.0  # Начальный баланс 30 руб.
-                tries_left = int(initial_amount / PRICE_PER_TRY)  # 1 примерка
-                
+            # Если пользователя нет, создаем запись с нулевым балансом
+            if not user_row:
                 await self.upsert_row(user_id, username, {
-                    AMOUNT_FIELD: initial_amount,
-                    TRIES_FIELD: tries_left,
-                    ACCESS_FIELD: True,
-                    STATUS_FIELD: "Оплачено"
+                    AMOUNT_FIELD: 0.0,
+                    TRIES_FIELD: 0,
+                    ACCESS_FIELD: False,
+                    STATUS_FIELD: "Не оплачено"
                 })
                 
-                # Обновляем кэш
-                self.last_payment_amounts[user_id] = initial_amount
-                self.last_tries_values[user_id] = tries_left
-                
-                logger.info(f"Initialized user {user_id} with {initial_amount} rub and {tries_left} tries")
+                logger.info(f"Initialized user {user_id} with zero balance")
             
         except Exception as e:
             logger.error(f"Error initializing user: {e}")
