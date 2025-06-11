@@ -923,13 +923,12 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             # Первое фото - одежда
             photo_type = 1
             filename = f"photo_1{os.path.splitext(file_path)[1]}"
-            caption = "✅ Фото одежды получено!\n"
-            "Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕\n"
+            caption = "✅ Фото одежды получено!Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
             
             # Добавляем кнопки после получения фото одежды
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
-                    InlineKeyboardButton(text="👤 Своё фото человека", callback_data="upload_person"),
+                    InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
                     InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
                 ]
             ])
