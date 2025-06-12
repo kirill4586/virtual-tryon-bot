@@ -1161,6 +1161,11 @@ async def check_results():
             
             for user_id_str in user_dirs:
                 user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+                
+                # Добавлено логирование
+                logger.info(f"Проверяю папку: {user_dir}")
+                logger.info(f"Найденные файлы: {os.listdir(user_dir)}")
+                
                 try:
                     user_id = int(user_id_str)
                 except ValueError:
@@ -1190,6 +1195,8 @@ async def check_results():
                         continue
 
                     logger.info(f"📤 Отправляем результат для {user_id}")
+
+                    # ... остальной код функции остается без изменений ...
 
                     # Отправляем фото пользователю
                     photo = FSInputFile(result_file)
