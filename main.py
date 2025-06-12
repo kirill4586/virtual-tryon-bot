@@ -1412,7 +1412,7 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "show_payment_options"))
+@dp.callback_query(F.data == "show_payment_options")
 async def show_payment_options_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки показа вариантов оплаты"""
     try:
