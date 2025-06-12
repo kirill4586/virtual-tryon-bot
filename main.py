@@ -5,14 +5,8 @@ import aiohttp
 import shutil
 import time
 import sys
-if sys.platform == "linux":
-    import fcntl
-    try:
-        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except IOError:
-        logger.error("Another instance is already running. Exiting.")
-        sys.exit(1)
-from aiogram import Bot, Dispatcher, F, types
+from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import (
@@ -29,6 +23,14 @@ from dotenv import load_dotenv
 from aiohttp import web
 from supabase.lib.client_options import ClientOptions
 from urllib.parse import quote
+
+if sys.platform == "linux":
+    import fcntl
+    try:
+        fcntl.flock(sys.stdout, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except IOError:
+        logger.error("Another instance is already running. Exiting.")
+        sys.exit(1)
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -69,17 +71,40 @@ TRIES_FIELD = "tries_left"
 STATUS_FIELD = "status"
 FREE_TRIES_FIELD = "free_tries_used"
 
-# Инициализация клиентов
+# Middleware для обработки устаревших callback-запросов
+class CallbackTimeoutMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        try:
+            return await handler(event, data)
+        except TelegramBadRequest as e:
+            if "query is too old" in str(e):
+                logger.warning(f"Callback query expired: {e}")
+                return None
+            raise
+
+# Инициализация клиентов с таймаутами
+client_options = ClientOptions(
+    postgrest_client_timeout=10,
+    storage_client_timeout=10
+)
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
 )
 dp = Dispatcher(storage=MemoryStorage())
+dp.update.middleware(CallbackTimeoutMiddleware())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+# Кеш для списка моделей
+models_cache = {
+    "man": {"time": 0, "data": []},
+    "woman": {"time": 0, "data": []},
+    "child": {"time": 0, "data": []}
+}
+CACHE_EXPIRATION = 300  # 5 минут
 
 # Инициализация Supabase с настройками для реального времени
 try:
-    client_options = ClientOptions(postgrest_client_timeout=None)
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
     logger.info("Supabase client initialized successfully")
     
@@ -541,10 +566,16 @@ async def send_examples_page(chat_id: int, page: int = 0):
         await bot.send_message(chat_id, "❌ Ошибка при загрузке примеров. Попробуйте позже.")
 
 async def get_models_list(category: str):
-    """Получает список моделей для указанной категории"""
+    """Получает список моделей для указанной категории с кешированием"""
     if not supabase:
         logger.warning("Supabase client not available")
         return []
+    
+    # Проверяем кеш
+    current_time = time.time()
+    if (current_time - models_cache[category]["time"]) < CACHE_EXPIRATION:
+        logger.info(f"Using cached models for {category}")
+        return models_cache[category]["data"]
     
     try:
         res = supabase.storage.from_(MODELS_BUCKET).list(category)
@@ -558,6 +589,12 @@ async def get_models_list(category: str):
             file['name'] for file in res 
             if any(file['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS)
         ]
+        
+        # Обновляем кеш
+        models_cache[category] = {
+            "time": current_time,
+            "data": models
+        }
         
         logger.info(f"Found {len(models)} models in {category} category")
         return models
@@ -641,7 +678,7 @@ async def upload_clothes_handler(callback_query: types.CallbackQuery):
     try:
         await callback_query.message.answer(
             "👕 <b>Нажмите на Скрепку 📎,рядом с сообщением и загрузите своё изображение Одежды для примерки.</b>\n"
-			"👇     👇     👇     👇    👇     👇"       
+            "👇     👇     👇     👇    👇     👇"       
         )       
         await callback_query.answer()
     except Exception as e:
@@ -653,7 +690,10 @@ async def upload_clothes_handler(callback_query: types.CallbackQuery):
 async def choose_model(callback_query: types.CallbackQuery):
     """Выбор модели"""
     if await is_processing(callback_query.from_user.id):
-        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        try:
+            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        except TelegramBadRequest:
+            logger.warning("Callback query expired for processing check")
         return
         
     try:
@@ -677,25 +717,29 @@ async def choose_model(callback_query: types.CallbackQuery):
 @dp.callback_query(F.data.startswith("models_"))
 async def show_category_models(callback_query: types.CallbackQuery):
     """Показывает модели выбранной категории"""
-    if await is_processing(callback_query.from_user.id):
-        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-        return
-        
-    data_parts = callback_query.data.split("_")
-    if len(data_parts) != 3:
-        await callback_query.answer("⚠️ Ошибка параметров", show_alert=True)
-        return
-        
-    category = data_parts[1]
-    page = int(data_parts[2])
-    
-    category_names = {
-        "man": "👨 Мужские модели",
-        "woman": "👩 Женские модели", 
-        "child": "🧒 Детские модели"
-    }
-    
+    start_time = time.time()
     try:
+        if await is_processing(callback_query.from_user.id):
+            try:
+                await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+            except TelegramBadRequest:
+                logger.warning("Callback query expired for processing check")
+            return
+            
+        data_parts = callback_query.data.split("_")
+        if len(data_parts) != 3:
+            await callback_query.answer("⚠️ Ошибка параметров", show_alert=True)
+            return
+            
+        category = data_parts[1]
+        page = int(data_parts[2])
+        
+        category_names = {
+            "man": "👨 Мужские модели",
+            "woman": "👩 Женские модели", 
+            "child": "🧒 Детские модели"
+        }
+        
         models = await get_models_list(category)
         logger.info(f"Models to display for {category}: {models}")
         
@@ -758,8 +802,12 @@ async def show_category_models(callback_query: types.CallbackQuery):
 
     except Exception as e:
         logger.error(f"Error in show_category_models: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
-        await callback_query.answer()
+        try:
+            await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
+        except:
+            pass
+    finally:
+        logger.info(f"show_category_models executed in {time.time() - start_time:.2f}s")
 
 @dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
@@ -774,7 +822,10 @@ async def model_selected(callback_query: types.CallbackQuery):
         return
         
     if await is_processing(user_id):
-        await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        try:
+            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        except TelegramBadRequest:
+            logger.warning("Callback query expired for processing check")
         return
         
     model_path = callback_query.data.replace("model_", "")
@@ -988,7 +1039,7 @@ async def upload_person_handler(callback_query: types.CallbackQuery):
     try:
         await callback_query.message.answer(
             "<b>👤Нажмите на Скрепку📎, рядом с сообщением и загрузите фото Человека для примерки</b>\n"
-			"👇     👇     👇     👇    👇     👇"       
+            "👇     👇     👇     👇    👇     👇"       
         )
         await callback_query.answer()
     except Exception as e:
@@ -1084,36 +1135,30 @@ async def show_payment_options(user: types.User):
         ])
         
         payment_text = (
-    "🚫 У вас закончились бесплатные примерки.\n\n"
-	"❤️Спасибо, что воспользовались нашей Виртуальной примерочной!!!🥰\n"
-	"Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку.\n"
-	"Сумма символическая, но которая поможет  Вам  стать стильными, модными и красивыми\n"
-	 "👗👔🩳👙👠👞👒👟🧢🧤👛👜\n\n"
-    "📌 <b>Для продолжения примерок необходимо пополнить баланс:</b>\n\n"
-	 "💰 <b>Тарифы:</b>\n"
-    f"- 30 руб = 1 примерка\n"
-    f"- 60 руб = 2 примерки\n"
-    f"- 90 руб = 3 примерки\n"
-    "и так далее...\n\n"
-	
-    "1️⃣ Нажмите на кнопку 'Пополнить баланс'\n\n"
-    "2️⃣ В поле оплаты указываете любую сумму не менее 30 руб (сколько хотите примерок)\n\n"
-   
-    "3️⃣ Выбираете удобный способ оплаты (Карта или СБП)\n\n"
-    "4️⃣ В поле <b>e-mail</b> - укажите любую почту, можете свою, можете придумать(не имеет значения)\n\n"
-    
-    "💥<b>ВСЁ!!!</b>💥\n\n"
-	 "⚠️‼️ <b>ВНИМАНИЕ!</b> При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-   "👇👇👇👇👇👇👇👇👇👇\n"
-    f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
-     "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-  
-    "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n"
-   
-    "‼️<b>Ничего не меняйте в сообщении‼️</b>\n\n"
-
-    "❓Свой баланс Вы можете отслеживать по кнопке 'Мой баланс'"
-)
+            "🚫 У вас закончились бесплатные примерки.\n\n"
+            "❤️Спасибо, что воспользовались нашей Виртуальной примерочной!!!🥰\n"
+            "Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку.\n"
+            "Сумма символическая, но которая поможет Вам стать стильными, модными и красивыми\n"
+            "👗👔🩳👙👠👞👒👟🧢🧤👛👜\n\n"
+            "📌 <b>Для продолжения примерок необходимо пополнить баланс:</b>\n\n"
+            "💰 <b>Тарифы:</b>\n"
+            f"- 30 руб = 1 примерка\n"
+            f"- 60 руб = 2 примерки\n"
+            f"- 90 руб = 3 примерки\n"
+            "и так далее...\n\n"
+            "1️⃣ Нажмите на кнопку 'Пополнить баланс'\n\n"
+            "2️⃣ В поле оплаты указываете любую сумму не менее 30 руб (сколько хотите примерок)\n\n"
+            "3️⃣ Выбираете удобный способ оплаты (Карта или СБП)\n\n"
+            "4️⃣ В поле <b>e-mail</b> - укажите любую почту, можете свою, можете придумать(не имеет значения)\n\n"
+            "💥<b>ВСЁ!!!</b>💥\n\n"
+            "⚠️‼️ <b>ВНИМАНИЕ!</b> При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+            "👇👇👇👇👇👇👇👇👇👇\n"
+            f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
+            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n"
+            "‼️<b>Ничего не меняйте в сообщении‼️</b>\n\n"
+            "❓Свой баланс Вы можете отслеживать по кнопке 'Мой баланс'"
+        )
         await bot.send_message(
             user.id,
             payment_text,
@@ -1190,8 +1235,7 @@ async def check_results():
                             logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
                             result_files = [f"result{ext}"]
                             break
-                        except Exception as e:
-                            logger.warning(f"❌ Не удалось скачать result{ext} из Supabase для {user_id_str}: {e}")
+                        except Exception:
                             continue
 
                 # Если файлы найдены, обрабатываем первый подходящий
@@ -1244,7 +1288,7 @@ async def check_results():
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
                         user_row = await supabase_api.get_user_row(user_id)
-                        current_username = user_row.get('username', '') if user_row.get('username') else ''
+                        current_username = user_row.get('username', '') if user_row else ''
 
                         # Уведомление администратору
                         if ADMIN_CHAT_ID:
@@ -1422,11 +1466,11 @@ async def monitor_payment_changes_task():
                         "Изменение баланса"
                     )
             
-            await asyncio.sleep(10)  # Проверяем каждые 10 секунд
+            await asyncio.sleep(5)  # Проверяем каждые 10 секунд
             
         except Exception as e:
             logger.error(f"Error in payment monitoring task: {e}")
-            await asyncio.sleep(30)  # При ошибке ждем дольше
+            await asyncio.sleep(3)  # При ошибке ждем дольше
 
 async def handle(request):
     """Обработчик корневого запроса"""
