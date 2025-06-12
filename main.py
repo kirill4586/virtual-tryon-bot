@@ -1189,7 +1189,7 @@ async def show_payment_options(user: types.User):
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
 
-@dp.callback_query(F.data == "check_balance"))
+@dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки проверки баланса"""
     try:
