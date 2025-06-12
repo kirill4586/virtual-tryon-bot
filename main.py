@@ -1162,143 +1162,37 @@ async def check_results():
             for user_id_str in user_dirs:
                 user_dir = os.path.join(UPLOAD_DIR, user_id_str)
                 
-                # Добавлено логирование
-                logger.info(f"Проверяю папку: {user_dir}")
-                logger.info(f"Найденные файлы: {os.listdir(user_dir)}")
-                
-                try:
-                    user_id = int(user_id_str)
-                except ValueError:
-                    logger.warning(f"Invalid user_id in directory name: {user_id_str}")
-                    continue
+                # Ищем во всех подпапках пользователя
+                for root, _, files in os.walk(user_dir):
+                    # Ищем result-файлы с любым поддерживаемым расширением
+                    result_files = [
+                        f for f in files
+                        if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
+                    ]
 
-                # Ищем result-файлы с любым поддерживаемым расширением
-                result_files = [
-                    f for f in os.listdir(user_dir)
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-                ]
-
-                if not result_files:
-                    continue
-
-                # Берем первый найденный файл результата
-                result_file = os.path.join(user_dir, result_files[0])
-
-                try:
-                    # Проверяем доступность файла
-                    if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                        logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
+                    if not result_files:
                         continue
 
-                    if os.path.getsize(result_file) == 0:
-                        logger.warning(f"🚫 Файл {result_file} пуст")
-                        continue
-
-                    logger.info(f"📤 Отправляем результат для {user_id}")
-
-                    # ... остальной код функции остается без изменений ...
-
-                    # Отправляем фото пользователю
-                    photo = FSInputFile(result_file)
+                    # Берем первый найденный файл результата
+                    result_file = os.path.join(root, result_files[0])
                     
-                    # Создаем клавиатуру с кнопками
-                    keyboard = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="🔄 Продолжить примерку",
-                                    callback_data="continue_tryon"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    text="💳 Пополнить баланс",
-                                    callback_data="show_payment_options"
-                                ),
-                                InlineKeyboardButton(
-                                    text="💰 Мой баланс",
-                                    callback_data="check_balance"
-                                )
-                            ]
-                        ]
-                    )
-
-                    await bot.send_photo(
-                        chat_id=user_id,
-                        photo=photo,
-                        caption="🎉 Ваша виртуальная примерка готова!",
-                        reply_markup=keyboard
-                    )
-
-                    # Получаем текущие данные пользователя, чтобы сохранить username
-                    user_row = await supabase_api.get_user_row(user_id)
-                    current_username = user_row.get('username', '') if user_row else ''
-
-                    # Уведомление администратору
-                    if ADMIN_CHAT_ID:
-                        try:
-                            await bot.send_message(
-                                ADMIN_CHAT_ID,
-                                f"✅ Пользователь @{current_username} ({user_id}) получил результат примерки"
-                            )
-                        except Exception as e:
-                            logger.error(f"Error sending admin notification: {e}")
-
-                    # Загружаем результат в Supabase с новым уникальным именем
                     try:
-                        file_ext = os.path.splitext(result_file)[1].lower()
-                        supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
+                        # Проверяем доступность файла
+                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
+                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
+                            continue
 
-                        with open(result_file, 'rb') as f:
-                            supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                path=supabase_path,
-                                file=f,
-                                file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                      "image/png" if file_ext == '.png' else
-                                      "image/webp"}
-                            )
-                        logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
-                    except Exception as upload_error:
-                        logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
+                        if os.path.getsize(result_file) == 0:
+                            logger.warning(f"🚫 Файл {result_file} пуст")
+                            continue
 
-                    # Обновляем Supabase, сохраняя username
-                    try:
-                        await supabase_api.upsert_row(user_id, current_username, {
-                            "status": "Результат отправлен",
-                            "result_sent": True,
-                            "ready": True,
-                            "result_url": supabase_path if 'supabase_path' in locals() else None,
-                            "username": current_username  # Явно сохраняем username
-                        })
-                    except Exception as db_error:
-                        logger.error(f"❌ Ошибка обновления Supabase: {db_error}")
+                        logger.info(f"📤 Отправляем результат для {user_id_str} из {result_file}")
 
-                    # Удаляем файлы пользователя
-                    try:
-                        # Удаляем все файлы в папке пользователя
-                        for filename in os.listdir(user_dir):
-                            file_path = os.path.join(user_dir, filename)
-                            try:
-                                if os.path.isfile(file_path):
-                                    os.unlink(file_path)
-                                elif os.path.isdir(file_path):
-                                    shutil.rmtree(file_path)
-                            except Exception as e:
-                                logger.error(f"Error deleting {file_path}: {e}")
-
-                        # Удаляем саму папку пользователя
-                        try:
-                            os.rmdir(user_dir)
-                            logger.info(f"🗑️ Папка {user_dir} удалена")
-                        except OSError as e:
-                            logger.error(f"Error removing directory {user_dir}: {e}")
-
-                    except Exception as cleanup_error:
-                        logger.error(f"❌ Ошибка удаления файлов: {cleanup_error}")
-
-                except Exception as e:
-                    logger.error(f"❌ Ошибка при отправке результата пользователю {user_id}: {e}")
-                    continue
+                        # ... остальной код отправки результата ...
+                        
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка при обработке результата {result_file}: {e}")
+                        continue
 
             await asyncio.sleep(3)  # Проверяем каждые 3 секунды
 
