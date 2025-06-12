@@ -1032,7 +1032,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
 
-@dp.callback_query(F.data == "upload_person"))
+@dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки загрузки фото человека"""
     try:
