@@ -1422,11 +1422,11 @@ async def monitor_payment_changes_task():
                         "Изменение баланса"
                     )
             
-            await asyncio.sleep(5)  # Проверяем каждые 10 секунд
+            await asyncio.sleep(10)  # Проверяем каждые 10 секунд
             
         except Exception as e:
             logger.error(f"Error in payment monitoring task: {e}")
-            await asyncio.sleep(3)  # При ошибке ждем дольше
+            await asyncio.sleep(30)  # При ошибке ждем дольше
 
 async def handle(request):
     """Обработчик корневого запроса"""
