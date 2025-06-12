@@ -919,7 +919,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         page = int(callback_query.data.split("_")[-1])
         await send_examples_page(callback_query.from_user.id, page)
         await callback_query.answer()
-	except Exception as e:
+    except Exception as e:
         logger.error(f"Error in view_examples: {e}")
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
