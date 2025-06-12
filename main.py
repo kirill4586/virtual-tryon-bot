@@ -1162,21 +1162,32 @@ async def check_results():
             for user_id_str in user_dirs:
                 user_dir = os.path.join(UPLOAD_DIR, user_id_str)
                 
-                # Ищем во всех подпапках пользователя
-                for root, _, files in os.walk(user_dir):
+                # Проверяем все возможные пути для результата
+                possible_paths = [
+                    user_dir,  # uploads/<user_id>/
+                    os.path.join(user_dir, "photos"),  # uploads/<user_id>/photos/
+                    os.path.join(user_dir, "models")   # uploads/<user_id>/models/
+                ]
+                
+                for path in possible_paths:
+                    if not os.path.exists(path):
+                        continue
+                        
                     # Ищем result-файлы с любым поддерживаемым расширением
                     result_files = [
-                        f for f in files
-                        if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
+                        f for f in os.listdir(path)
+                        if f.lower().startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
                     ]
 
                     if not result_files:
                         continue
 
                     # Берем первый найденный файл результата
-                    result_file = os.path.join(root, result_files[0])
+                    result_file = os.path.join(path, result_files[0])
                     
                     try:
+                        user_id = int(user_id_str)
+                        
                         # Проверяем доступность файла
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
@@ -1186,15 +1197,40 @@ async def check_results():
                             logger.warning(f"🚫 Файл {result_file} пуст")
                             continue
 
-                        logger.info(f"📤 Отправляем результат для {user_id_str} из {result_file}")
-
-                        # ... остальной код отправки результата ...
+                        logger.info(f"📤 Найден результат для {user_id} в {result_file}")
+                        
+                        # Отправляем результат пользователю
+                        with open(result_file, 'rb') as f:
+                            await bot.send_photo(
+                                chat_id=user_id,
+                                photo=f,
+                                caption="🎉 Ваш результат готов!",
+                                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                                    [
+                                        InlineKeyboardButton(
+                                            text="🔄 Сделать ещё примерку",
+                                            callback_data="continue_tryon"
+                                        )
+                                    ]
+                                ])
+                            )
+                        
+                        # Удаляем файл результата после отправки
+                        try:
+                            os.remove(result_file)
+                            logger.info(f"✅ Файл результата {result_file} удален")
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка при удалении файла {result_file}: {e}")
                         
                     except Exception as e:
                         logger.error(f"❌ Ошибка при обработке результата {result_file}: {e}")
                         continue
 
             await asyncio.sleep(3)  # Проверяем каждые 3 секунды
+
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
+            await asyncio.sleep(3)
 
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
