@@ -1517,7 +1517,7 @@ async def main():
         await start_web_server()
         
         # Установка вебхука
-        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
+        webhook_url = f"https://virtual-tryon-bot-3n0o.onrender.com{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
             drop_pending_updates=True,
