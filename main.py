@@ -90,7 +90,7 @@ client_options = ClientOptions(
 bot = Bot(
     token=BOT_TOKEN,
     default=DefaultBotProperties(parse_mode=ParseMode.HTML)
-	)
+)
 dp = Dispatcher(storage=MemoryStorage())
 dp.update.middleware(CallbackTimeoutMiddleware())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -782,20 +782,18 @@ async def show_category_models(callback_query: types.CallbackQuery):
                 continue
 
         if end_idx < len(models):
-            keyboard_buttons = [
-                InlineKeyboardButton(
-                    text="⬇️ Показать еще",
-                    callback_data=f"models_{category}_{page + 1}"
-                ),
-                InlineKeyboardButton(
-                    text="📷 Своё фото",
-                    callback_data="upload_person"
-                )
-            ]
-            
             await callback_query.message.answer(
-                "Выберите действие:",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[keyboard_buttons])
+                "Показать еще модели?",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="⬇️ Показать еще",
+                                callback_data=f"models_{category}_{page + 1}"
+                            )
+                        ]
+                    ]
+                )
             )
             await callback_query.answer()
         else:
@@ -1058,11 +1056,6 @@ async def handle_photo(message: types.Message):
     os.makedirs(user_dir, exist_ok=True)
     
     try:
-        # Проверяем, идет ли уже обработка для пользователя
-        if await is_processing(user_id):
-            await message.answer("✅ Оба файла уже получены.\n🔄 Идёт примерка. Ожидайте результат!")
-            return
-            
         tries_left = await get_user_tries(user_id)
         
         if tries_left <= 0:
@@ -1074,24 +1067,6 @@ async def handle_photo(message: types.Message):
     except Exception as e:
         logger.error(f"Error handling photo: {e}")
         await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
-
-@dp.message(F.text)
-async def handle_text(message: types.Message):
-    """Обработчик текстовых сообщений"""
-    user_id = message.from_user.id
-    
-    # Проверяем, идет ли обработка для пользователя
-    if await is_processing(user_id):
-        await message.answer("✅ Оба файла уже получены.\n🔄 Идёт примерка. Ожидайте результат!")
-        return
-        
-    # Если сообщение не команда /start, отправляем приветствие
-    if not message.text.startswith('/'):
-        await send_welcome(
-            message.from_user.id,
-            message.from_user.username,
-            message.from_user.full_name
-        )
 
 async def show_balance_info(user: types.User):
     """Показывает информацию о балансе пользователя"""
@@ -1141,7 +1116,7 @@ async def show_payment_options(user: types.User):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить", 
+                    text="💳 Пополнить баланс", 
                     url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
                 )
             ],
@@ -1171,7 +1146,12 @@ async def show_payment_options(user: types.User):
             f"- 60 руб = 2 примерки\n"
             f"- 90 руб = 3 примерки\n"
             "и так далее...\n\n"
-            "⚠️‼️ <b>Скопируйте это сообщение, нажмите кнопку \"Оплатить\" и на странице оплаты вставьте его в поле для сообщений, которое находится под оплатой </b>\n"
+            "1️⃣ Нажмите на кнопку 'Пополнить баланс (‼️Обязательно указать имя, читйате ‼️ВНИМАНИЕ)'\n\n"
+            "2️⃣ В поле оплаты указываете любую сумму не менее 30 руб (сколько хотите примерок)\n\n"
+            "3️⃣ Выбираете удобный способ оплаты (Карта или СБП)\n\n"
+            "4️⃣ В поле <b>e-mail</b> - укажите любую почту, можете свою, можете придумать(не имеет значения)\n\n"
+            "💥<b>ВСЁ!!!</b>💥\n\n"
+            "⚠️‼️ <b>ВНИМАНИЕ!</b> При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
             "👇👇👇👇👇👇👇👇👇👇\n"
             f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
             "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
@@ -1537,7 +1517,7 @@ async def main():
         await start_web_server()
         
         # Установка вебхука
-        webhook_url = f"https://virtual-tryon-bot.onrender.com/{BOT_TOKEN.split(':')[1]}"
+        webhook_url = f"https://virtual-tryon-bot-3n0o.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
             drop_pending_updates=True,
@@ -1574,11 +1554,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-		
-		
-		
-		
-		
-		
-		
-		
