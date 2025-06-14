@@ -548,9 +548,6 @@ async def send_examples_page(chat_id: int, page: int = 0):
                 keyboard_buttons.append(
                     InlineKeyboardButton(text="Посмотреть ещё", callback_data=f"more_examples_{page + 1}")
                 )
-                keyboard_buttons.append(
-                    InlineKeyboardButton(text="Своё фото", callback_data="upload_person")
-                )
             
             keyboard_buttons.append(
                 InlineKeyboardButton(text="Возврат в меню", callback_data="back_to_menu")
@@ -793,6 +790,10 @@ async def show_category_models(callback_query: types.CallbackQuery):
                             InlineKeyboardButton(
                                 text="⬇️ Показать еще",
                                 callback_data=f"models_{category}_{page + 1}"
+                            ),
+                            InlineKeyboardButton(
+                                text="📸 Своё фото",
+                                callback_data="upload_person"
                             )
                         ]
                     ]
@@ -1119,7 +1120,7 @@ async def show_payment_options(user: types.User):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Пополнить баланс\n(‼️Обязательно указать имя, читайте ⚠️‼️ВНИМАНИЕ)",
+                    text="💳 Пополнить баланс\n‼️Обязательно указать имя, читайте ⚠️‼️ВНИМАНИЕ",
                     url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
                 )
             ],
