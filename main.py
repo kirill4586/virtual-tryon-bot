@@ -919,284 +919,382 @@ async def model_selected(callback_query: types.CallbackQuery):
                     photo=model_url,
                     caption=response_text
                 )
+                await callback_query.answer()
                 
             except Exception as e:
-                logger.error(f"Error sending model photo: {e}")
-                await callback_query.message.answer(
-                    f"✅ Модель {model_display_name} выбрана.\n\n"
-                    "⚠️ Не удалось загрузить изображение модели. Попробуйте позже."
+                logger.error(f"Error downloading model: {e}")
+                await bot.send_message(
+                    user_id,
+                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
                 )
-        else:
-            await callback_query.message.answer(
-                f"✅ Модель {model_display_name} выбрана.\n\n"
-                "⚠️ Сервис временно недоступен. Попробуйте позже."
-            )
-        
-        await callback_query.answer()
-        
+                await callback_query.answer()
+                return
+            
     except Exception as e:
         logger.error(f"Error in model_selected: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при выборе модели. Попробуйте позже.")
+        await bot.send_message(
+            user_id,
+            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
+        )
         await callback_query.answer()
 
-@dp.message(F.photo)
-async def handle_photo(message: Message):
-    """Обработчик получения фото от пользователя"""
-    user_id = message.from_user.id
-    username = message.from_user.username
-    
-    # Проверяем, идет ли уже обработка для этого пользователя
-    if await is_processing(user_id):
-        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-        return
-        
-    # Проверяем количество оставшихся примерок
-    tries_left = await get_user_tries(user_id)
-    if tries_left <= 0:
-        await show_payment_options(message.from_user)
-        return
-        
+@dp.callback_query(F.data == "upload_person")
+async def upload_person_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки фото человека"""
     try:
+        if await is_processing(callback_query.from_user.id):
+            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+            return
+            
+        await callback_query.message.answer(
+            "<b>👤Нажмите на Скрепку📎, рядом с сообщением и загрузите фото Человека для примерки</b>\n"
+            "👇     👇     👇     👇    👇     👇"       
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_person_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+async def process_photo(message: types.Message, user: types.User, user_dir: str):
+    """Обработка и сохранение фотографии"""
+    try:
+        user_id = user.id
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
         os.makedirs(user_dir, exist_ok=True)
-        
-        # Проверяем, какие фото уже есть
-        existing_files = os.listdir(user_dir)
-        clothes_photo_exists = any(f.startswith("photo_1") for f in existing_files)
-        person_photo_exists = any(f.startswith("photo_2") for f in existing_files)
-        model_selected = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
-        
-        # Определяем тип фото (одежда или человек)
-        if not clothes_photo_exists:
-            photo_type = 1  # Одежда
-            file_prefix = "photo_1"
-            status_field = "photo_clothes"
-            next_step_text = "👤 Теперь отправьте фото человека (желательно в полный рост) или выберите модель"
-        elif not person_photo_exists and not model_selected:
-            photo_type = 2  # Человек
-            file_prefix = "photo_2"
-            status_field = "photo_person"
-            next_step_text = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
-        else:
-            await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-            return
-            
-        # Скачиваем фото
-        file_id = message.photo[-1].file_id
+
+        # Получаем файл фотографии
+        photo = message.photo[-1]  # Берем фото наибольшего размера
+        file_id = photo.file_id
         file = await bot.get_file(file_id)
         file_path = file.file_path
-        ext = os.path.splitext(file_path)[1]
-        
-        if ext.lower() not in SUPPORTED_EXTENSIONS:
-            await message.answer("⚠️ Формат файла не поддерживается. Отправьте фото в формате JPG, PNG или WEBP.")
-            return
+
+        # Определяем тип фото (одежда или человек)
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+
+        if not existing_photos:
+            # Первое фото - одежда
+            photo_type = 1
+            filename = f"photo_1{os.path.splitext(file_path)[1]}"
+            caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
             
-        local_filename = f"{file_prefix}{ext}"
-        local_path = os.path.join(user_dir, local_filename)
-        
-        await bot.download_file(file_path, local_path)
-        
-        # Загружаем фото в Supabase
-        await upload_to_supabase(local_path, user_id, "photos")
-        
-        # Обновляем статус в базе данных
-        await supabase_api.upsert_row(user_id, username, {
-            status_field: True,
-            "status": "photo_received" if photo_type == 1 else "all_photos_received"
-        })
-        
-        if photo_type == 1:
-            # Отправляем клавиатуру для выбора модели
+            # Добавляем кнопки после получения фото одежды
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="👕 Загрузить фото человека", callback_data="upload_person")],
-                [InlineKeyboardButton(text="👗 Выбрать модель", callback_data="choose_model")]
+                [
+                    InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
+                    InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
+                ]
             ])
-            
-            await message.answer(
-                "✅ Фото одежды получено!\n\n"
-                "Теперь вы можете:\n"
-                "1. Отправить фото человека\n"
-                "2. Выбрать модель из каталога",
-                reply_markup=keyboard
-            )
         else:
-            # Все фото получены, начинаем обработку
+            # Второе фото - человек
+            photo_type = 2
+            filename = f"photo_2{os.path.splitext(file_path)[1]}"
+            caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
+            keyboard = None
+
+            # Добавляем пользователя в список обрабатываемых
             UserProcessingState.add_processing_user(user_id)
             
-            await supabase_api.upsert_row(user_id, username, {
+            # Уведомление администратору о получении всех фото
+            await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
+
+        # Сохраняем фото локально
+        local_path = os.path.join(user_dir, filename)
+        await bot.download_file(file_path, local_path)
+
+        # Загружаем фото в Supabase
+        await upload_to_supabase(local_path, user_id, "photos")
+
+        # Получаем текущие данные пользователя, чтобы сохранить username
+        user_row = await supabase_api.get_user_row(user_id)
+        current_username = user_row.get('username', '') if user_row else (user.username or '')
+
+        # Обновляем статус в базе данных, сохраняя username
+        if photo_type == 1:
+            await supabase_api.upsert_row(user_id, current_username, {
+                "photo1_received": True,
+                "photo2_received": False,
+                "status": "Ожидается фото человека",
+                "username": current_username  # Явно сохраняем username
+            })
+        else:
+            await supabase_api.upsert_row(user_id, current_username, {
                 "photo1_received": True,
                 "photo2_received": True,
                 "status": "В обработке",
-                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "username": current_username  # Явно сохраняем username
             })
-            
-            await supabase_api.decrement_tries(user_id)
-            
-            await notify_admin(f"📸 Все фото получены от @{username} ({user_id})")
-            await message.answer(next_step_text)
-            
-    except Exception as e:
-        logger.error(f"Error handling photo for {user_id}: {e}")
-        await message.answer("⚠️ Ошибка при обработке фото. Попробуйте позже.")
 
-@dp.message(F.text)
-async def handle_text(message: Message):
-    """Обработчик текстовых сообщений"""
-    user_id = message.from_user.id
+            await supabase_api.decrement_tries(user_id)
+
+        if keyboard:
+            await message.answer(caption, reply_markup=keyboard)
+        else:
+            await message.answer(caption)
+
+    except Exception as e:
+        logger.error(f"Error processing photo: {e}")
+        await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+        raise
+
+@dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    """Обработчик фотографий"""
+    user = message.from_user
+    user_id = user.id
     
-    # Проверяем, идет ли обработка
-    if await is_processing(user_id):
+    if UserProcessingState.is_user_processing(user_id):
         await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
         return
         
-    # Если сообщение не команда и не число (для оплаты), отправляем приветствие
-    if not message.text.startswith('/'):
-        await send_welcome(
-            message.from_user.id,
-            message.from_user.username,
-            message.from_user.full_name
-        )
-
-async def show_payment_options(user: types.User):
-    """Показывает варианты оплаты"""
-    user_id = user.id
-    username = user.username
-    
-    payment_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💳 Оплатить картой", callback_data=f"payment_card")],
-        [InlineKeyboardButton(text="📱 Оплатить через DonationAlerts", callback_data=f"payment_donationalerts")],
-        [InlineKeyboardButton(text="🔄 Проверить оплату", callback_data=f"check_payment_{user_id}")]
-    ])
-    
-    await bot.send_message(
-        user_id,
-        "💰 <b>Пополните баланс для примерок</b>\n\n"
-        f"💵 Стоимость одной примерки: {PRICE_PER_TRY} руб.\n"
-        "👇 Выберите способ оплаты:",
-        reply_markup=payment_keyboard
-    )
-    
-    await supabase_api.upsert_row(user_id, username, {
-        "status": "awaiting_payment"
-    })
-
-@dp.callback_query(F.data.startswith("payment_"))
-async def handle_payment_method(callback_query: types.CallbackQuery):
-    """Обработчик выбора способа оплаты"""
-    payment_method = callback_query.data.replace("payment_", "")
-    user_id = callback_query.from_user.id
-    
-    if payment_method == "card":
-        # Здесь должна быть реализация оплаты картой
-        await callback_query.message.answer(
-            "💳 Оплата картой временно недоступна. Пожалуйста, используйте другой способ оплаты."
-        )
-    elif payment_method == "donationalerts":
-        await callback_query.message.answer(
-            f"📱 Для оплаты через DonationAlerts:\n\n"
-            f"1. Перейдите на страницу: https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}\n"
-            f"2. Укажите сумму (минимум {PRICE_PER_TRY} руб.)\n"
-            f"3. В комментарии укажите ваш ID: {user_id}\n\n"
-            f"После оплаты нажмите кнопку '🔄 Проверить оплату'"
-        )
-    
-    await callback_query.answer()
-
-@dp.callback_query(F.data.startswith("check_payment_"))
-async def check_payment(callback_query: types.CallbackQuery):
-    """Проверка оплаты"""
-    user_id = callback_query.from_user.id
-    username = callback_query.from_user.username
-    
     try:
-        # Проверяем баланс пользователя
-        user_row = await supabase_api.get_user_row(user_id)
-        if not user_row:
-            await callback_query.answer("❌ Ваши данные не найдены. Начните с команды /start", show_alert=True)
+        tries_left = await get_user_tries(user_id)
+        
+        if tries_left <= 0:
+            await show_payment_options(user)
             return
             
-        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
-        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row.get(TRIES_FIELD) else 0
-        
-        if payment_amount > 0:
-            await callback_query.answer(f"✅ Ваш баланс: {payment_amount} руб. Доступно примерок: {tries_left}", show_alert=True)
-            
-            # Если оплата есть, но доступ не предоставлен - обновляем статус
-            if not user_row.get(ACCESS_FIELD, False):
-                await supabase_api.check_and_update_access(user_id)
-        else:
-            await callback_query.answer("❌ Оплата не найдена. Попробуйте позже или обратитесь в поддержку", show_alert=True)
-            
-    except Exception as e:
-        logger.error(f"Error checking payment for {user_id}: {e}")
-        await callback_query.answer("⚠️ Ошибка при проверке оплаты. Попробуйте позже", show_alert=True)
-
-async def process_user_files(user_id: int):
-    """Обработка файлов пользователя и отправка результата"""
-    try:
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
-        
-        # Здесь должна быть логика обработки фото
-        # Временная заглушка - просто ждем 5 секунд для имитации обработки
-        await asyncio.sleep(5)
-        
-        # Отправляем результат (временный пример)
-        result_path = os.path.join(user_dir, "result.jpg")
-        # Создаем временный файл результата
-        with open(result_path, 'wb') as f:
-            f.write(b"Fake result image data")
-            
-        await bot.send_photo(
-            chat_id=user_id,
-            photo=FSInputFile(result_path),
-            caption="🖼️ <b>Результат виртуальной примерки</b>\n\n"
-                   "Спасибо за использование нашего сервиса!\n"
-                   "Чтобы начать новую примерку, отправьте /start"
-        )
-        
-        # Уведомляем администратора
-        await notify_admin(f"✅ Результат отправлен пользователю {user_id}")
+        os.makedirs(user_dir, exist_ok=True)
+        await process_photo(message, user, user_dir)
         
     except Exception as e:
-        logger.error(f"Error processing files for {user_id}: {e}")
-        await bot.send_message(
-            user_id,
-            "⚠️ Произошла ошибка при обработке ваших фото. Пожалуйста, попробуйте позже."
-        )
-    finally:
-        # Очищаем папку пользователя
-        try:
-            shutil.rmtree(user_dir)
-            logger.info(f"Cleaned up user directory for {user_id}")
-        except Exception as e:
-            logger.error(f"Error cleaning user directory for {user_id}: {e}")
-        
-        # Разблокируем пользователя
-        UserProcessingState.remove_processing_user(user_id)
-        
-        # Сбрасываем флаги в базе данных
-        await supabase_api.reset_flags(user_id)
+        logger.error(f"Error handling photo: {e}")
+        await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
-async def main():
-    """Основная функция запуска бота"""
-    try:
-        logger.info("Starting bot...")
+@dp.message()
+async def handle_other_messages(message: types.Message):
+    """Обработчик всех остальных сообщений"""
+    user_id = message.from_user.id
+    
+    if UserProcessingState.is_user_processing(user_id):
+        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
+        return
         
-        # Удаляем вебхук если он был
-        await bot.delete_webhook()
-        
-        # Запускаем поллинг
-        await dp.start_polling(bot)
-        
-    except Exception as e:
-        logger.error(f"Bot failed: {e}")
-    finally:
-        await cleanup_resources()
+    await message.answer("Пожалуйста, следуйте инструкциям бота или используйте команду /start")
+
+async def check_results():
+    """Проверяет наличие результатов для отправки пользователям"""
+    logger.info("🔄 Starting check_results() loop...")
+    while True:
+        try:
+            logger.info("🔍 Scanning for results...")
+
+            if not os.path.exists(UPLOAD_DIR):
+                logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
+                await asyncio.sleep(10)
+                continue
+
+            for user_id_str in os.listdir(UPLOAD_DIR):
+                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+                if not os.path.isdir(user_dir):
+                    continue
+
+                logger.info(f"📁 Checking user dir: {user_dir}")
+
+                # Ищем result-файлы с любым поддерживаемым расширением
+                result_files = [
+                    f for f in os.listdir(user_dir)
+                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
+                ]
+
+                # Если не найдено локально — пробуем скачать из Supabase
+                if not result_files:
+                    for ext in SUPPORTED_EXTENSIONS:
+                        try:
+                            result_supabase_path = f"{user_id_str}/result{ext}"
+                            result_file_local = os.path.join(user_dir, f"result{ext}")
+                            os.makedirs(user_dir, exist_ok=True)
+
+                            res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
+                            with open(result_file_local, 'wb') as f:
+                                f.write(res)
+
+                            logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
+                            result_files = [f"result{ext}"]
+                            break
+                        except Exception:
+                            continue
+
+                # Если файлы найдены, обрабатываем первый подходящий
+                if result_files:
+                    result_file = os.path.join(user_dir, result_files[0])
+
+                    try:
+                        user_id = int(user_id_str)
+
+                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
+                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
+                            continue
+
+                        if os.path.getsize(result_file) == 0:
+                            logger.warning(f"🚫 Файл {result_file} пуст")
+                            continue
+
+                        logger.info(f"📤 Отправляем результат для {user_id}")
+
+                        photo = FSInputFile(result_file)
+                        
+                        # Создаем клавиатуру с кнопками
+                        keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[
+                                [
+                                    InlineKeyboardButton(
+                                        text="🔄 Продолжить примерку",
+                                        callback_data="continue_tryon"
+                                    )
+                                ],
+                                [
+                                    InlineKeyboardButton(
+                                        text="💳 Пополнить баланс",
+                                        callback_data="show_payment_options"
+                                    ),
+                                    InlineKeyboardButton(
+                                        text="💰 Мой баланс",
+                                        callback_data="check_balance"
+                                    )
+                                ]
+                            ]
+                        )
+
+                        await bot.send_photo(
+                            chat_id=user_id,
+                            photo=photo,
+                            caption="🎉 Ваша виртуальная примерка готова!",
+                            reply_markup=keyboard
+                        )
+
+                        # Удаляем пользователя из списка обрабатываемых
+                        UserProcessingState.remove_processing_user(user_id)
+
+                        # Получаем текущие данные пользователя, чтобы сохранить username
+                        user_row = await supabase_api.get_user_row(user_id)
+                        current_username = user_row.get('username', '') if user_row else ''
+
+                        # Уведомление администратору
+                        if ADMIN_CHAT_ID:
+                            try:
+                                await bot.send_message(
+                                    ADMIN_CHAT_ID,
+                                    f"✅ Пользователь @{current_username} ({user_id}) получил результат примерки"
+                                )
+                            except Exception as e:
+                                logger.error(f"Error sending admin notification: {e}")
+
+                        # Загружаем результат в Supabase с новым уникальным именем
+                        try:
+                            file_ext = os.path.splitext(result_file)[1].lower()
+                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
+
+                            with open(result_file, 'rb') as f:
+                                supabase.storage.from_(UPLOADS_BUCKET).upload(
+                                    path=supabase_path,
+                                    file=f,
+                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
+                                          "image/png" if file_ext == '.png' else
+                                          "image/webp"}
+                                )
+                            logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
+                        except Exception as upload_error:
+                            logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
+
+                        # Обновляем Supabase, сохраняя username
+                        try:
+                            await supabase_api.upsert_row(user_id, current_username, {
+                                "status": "Результат отправлен",
+                                "result_sent": True,
+                                "ready": True,
+                                "result_url": supabase_path if 'supabase_path' in locals() else None,
+                                "username": current_username  # Явно сохраняем username
+                            })
+                        except Exception as db_error:
+                            logger.error(f"❌ Ошибка обновления Supabase: {db_error}")
+
+                        # Полная очистка локальной папки пользователя
+                        try:
+                            shutil.rmtree(user_dir)
+                            logger.info(f"🗑️ Папка {user_dir} полностью удалена")
+                        except Exception as cleanup_error:
+                            logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
+
+                        # Удаляем все файлы пользователя из Supabase
+                        try:
+                            base = supabase.storage.from_(UPLOADS_BUCKET)
+                            files_to_delete = []
+
+                            # Добавляем все возможные фото пользователя
+                            for ext in SUPPORTED_EXTENSIONS:
+                                files_to_delete.extend([
+                                    f"{user_id_str}/photos/photo_1{ext}",
+                                    f"{user_id_str}/photos/photo_2{ext}",
+                                    f"{user_id_str}/models/selected_model{ext}"
+                                ])
+
+                            # Добавляем result-файлы
+                            files_to_delete.extend([
+                                f"{user_id_str}/result{ext}" for ext in SUPPORTED_EXTENSIONS
+                            ])
+
+                            # Добавляем файлы из папки results
+                            try:
+                                result_files_in_supabase = base.list(f"{user_id_str}/results")
+                                for f in result_files_in_supabase:
+                                    if f['name'].startswith("result"):
+                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
+                            except Exception as e:
+                                logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
+
+                            # Удаляем только существующие файлы
+                            existing_files = []
+                            for file_path in files_to_delete:
+                                try:
+                                    base.download(file_path)
+                                    existing_files.append(file_path)
+                                except Exception:
+                                    continue
+
+                            if existing_files:
+                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
+                                base.remove(existing_files)
+                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
+                            else:
+                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
+
+                        except Exception as e:
+                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
+
+                    except Exception as e:
+                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+                        continue
+
+            await asyncio.sleep(30)
+
+        except Exception as e:
+            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
+            await asyncio.sleep(30)
+
+# Остальной код остается без изменений (обработчики для view_examples, back_to_menu, more_examples, 
+# show_payment_options, check_balance, continue_tryon_handler, monitor_payment_changes_task и т.д.)
 
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(main())
+        
     except KeyboardInterrupt:
-        logger.info("Bot stopped by user")
+        logger.info("Bot stopped by keyboard interrupt")
+        
     except Exception as e:
-        logger.error(f"Fatal error: {e}")
+        logger.critical(f"Fatal error: {e}")
+        
+    finally:
+        loop.run_until_complete(on_shutdown())
+        loop.close()
+        logger.info("Bot successfully shut down")	
+					
+					
