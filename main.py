@@ -110,12 +110,13 @@ try:
     
     # Проверка бакетов хранилища
     try:
-        buckets = supabase.storage.list_buckets()
-        logger.info(f"Available buckets: {buckets}")
-        
+		buckets = supabase.storage.list_buckets()
+        bucket_names = [b.name for b in buckets]  # Получаем имена бакетов через атрибут .name
+        logger.info(f"Available buckets: {bucket_names}")
+
         required_buckets = [MODELS_BUCKET, EXAMPLES_BUCKET, UPLOADS_BUCKET]
         for bucket in required_buckets:
-            if bucket not in [b['name'] for b in buckets]:
+            if bucket not in bucket_names:
                 logger.error(f"Bucket '{bucket}' not found in Supabase storage")
                 raise Exception(f"Required bucket '{bucket}' not found")
     except Exception as e:
