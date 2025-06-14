@@ -1116,7 +1116,8 @@ async def show_payment_options(user: types.User):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Пополнить баланс (‼️Обязательно указать имя, читйате ‼️ВНИМАНИЕ)",
+                    text="💳 Пополнить баланс (‼️Обязательно\n"
+					"указать имя, читйате ‼️ВНИМАНИЕ)",
                     url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
                 )
             ],
