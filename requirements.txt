@@ -6,5 +6,5 @@ aiogram==3.5.0
 supabase
 python-socketio[asyncio_client]
 pydantic==2.7.1
-pydantic-core==2.18.3
+pydantic-core==2.35.1
 --only-binary pydantic-core
