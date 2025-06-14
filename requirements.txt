@@ -1,8 +1,7 @@
---prefer-binary
-aiohttp~=3.9.0
-python-dotenv
-requests
-httpx
+aiohttp==3.9.3
+python-dotenv==1.0.1
+requests==2.31.0
+httpx==0.23.3
 aiogram==3.5.0
-supabase
-python-socketio[asyncio_client]
+supabase==1.0.3
+python-socketio[asyncio_client]==5.11.2
