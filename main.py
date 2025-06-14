@@ -1279,7 +1279,22 @@ async def check_results():
 
 # Остальной код остается без изменений (обработчики для view_examples, back_to_menu, more_examples, 
 # show_payment_options, check_balance, continue_tryon_handler, monitor_payment_changes_task и т.д.)
-
+async def main():
+    """Основная функция для запуска бота"""
+    try:
+        logger.info("Starting bot...")
+        
+        # Запускаем фоновую задачу проверки результатов
+        asyncio.create_task(check_results())
+        
+        # Запускаем бота
+        await dp.start_polling(bot)
+        
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
+    finally:
+        await cleanup_resources()
 if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
