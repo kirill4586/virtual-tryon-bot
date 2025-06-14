@@ -926,7 +926,7 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "back_to_menu"))
+@dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
     try:
@@ -1035,7 +1035,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
 
-@dp.callback_query(F.data == "upload_person"))
+@dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки загрузки фото человека"""
     try:
@@ -1204,7 +1204,7 @@ async def show_payment_options(user: types.User):
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
 
-@dp.callback_query(F.data == "check_balance"))
+@dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки проверки баланса"""
     try:
@@ -1412,7 +1412,7 @@ async def check_results():
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-@dp.callback_query(F.data == "continue_tryon"))
+@dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
@@ -1427,7 +1427,7 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "show_payment_options"))
+@dp.callback_query(F.data == "show_payment_options")
 async def show_payment_options_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки показа вариантов оплаты"""
     try:
