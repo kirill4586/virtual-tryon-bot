@@ -110,8 +110,6 @@ try:
     
     # Проверка бакетов хранилища
     try:
-		    # Проверка бакетов хранилища
-    try:
         buckets = supabase.storage.list_buckets()
         bucket_names = [b.name for b in buckets]  # Получаем имена бакетов через атрибут .name
         logger.info(f"Available buckets: {bucket_names}")
