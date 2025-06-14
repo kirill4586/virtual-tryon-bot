@@ -2,9 +2,7 @@ aiohttp~=3.9.0
 python-dotenv
 requests
 httpx
-aiogram==3.5.0
+aiogram==3.0.0b7
 supabase
 python-socketio[asyncio_client]
-pydantic==2.6.4
-pydantic-core==2.20.0
---only-binary pydantic-core
+pydantic==1.10.13
