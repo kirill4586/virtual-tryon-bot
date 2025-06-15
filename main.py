@@ -858,36 +858,10 @@ async def model_selected(callback_query: types.CallbackQuery):
                 logger.info(f"Model {model_path} downloaded successfully")
                 
                 # Удаляем старые result-файлы перед новой примеркой
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
-
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
-
                 for f in os.listdir(user_dir):
                     if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
                         os.remove(os.path.join(user_dir, f))
                         logger.info(f"🗑️ Удален старый результат: {f}")
-
-                
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
-
-                
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
 
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
@@ -929,20 +903,20 @@ async def model_selected(callback_query: types.CallbackQuery):
                 
             except Exception as e:
                 logger.error(f"Error downloading model: {e}")
-                await bot.send_message(
-                    user_id,
-                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
-                )
-                await callback_query.answer()
-                return
-            
-    except Exception as e:
-        logger.error(f"Error in model_selected: {e}")
-        await bot.send_message(
-            user_id,
-            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
-        )
-        await callback_query.answer()
+                    await bot.send_message(
+                        user_id,
+                        "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
+                    )
+                    await callback_query.answer()
+                    return
+                
+        except Exception as e:
+            logger.error(f"Error in model_selected: {e}")
+            await bot.send_message(
+                user_id,
+                "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
+            )
+            await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
@@ -1026,18 +1000,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
 
         # Удаляем старые result-файлы перед новой примеркой
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
-
-        await supabase_api.update_user_row(user_id, {
-            "ready": False,
-            "result_sent": False,
-            "result_url": None
-        })
-
         for f in os.listdir(user_dir):
             if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
                 os.remove(os.path.join(user_dir, f))
@@ -1102,9 +1064,17 @@ async def handle_photo(message: types.Message):
     """Обработчик фотографий"""
     user = message.from_user
     user_id = user.id
+    
+    # Проверяем, не идет ли уже обработка для этого пользователя
+    user_row = await supabase_api.get_user_row(user_id)
+    if user_row and user_row.get("ready"):
+        # Если результат уже был отправлен, сбрасываем флаги
+        await supabase_api.reset_flags(user_id)
+    
     if await is_processing(user_id):
         await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
         return
+        
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
@@ -1267,6 +1237,12 @@ async def check_results():
 
                 logger.info(f"📁 Checking user dir: {user_dir}")
 
+                # Проверяем статус пользователя в базе данных
+                user_row = await supabase_api.get_user_row(int(user_id_str))
+                if user_row and user_row.get("ready"):
+                    logger.info(f"⏩ Пропускаем пользователя {user_id_str} - результат уже отправлен")
+                    continue
+
                 # Ищем result-файлы с любым поддерживаемым расширением
                 result_files = [
                     f for f in os.listdir(user_dir)
@@ -1302,22 +1278,9 @@ async def check_results():
                             logger.info(f"⏩ Пропускаем отправку: данные пользователя не найдены ({user_id})")
                             continue
 
-                        photo1 = os.path.exists(os.path.join(user_dir, "photo_1.jpg"))
-                        photo2 = os.path.exists(os.path.join(user_dir, "photo_2.jpg"))
-                        model = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
-
-                        if user_row.get("ready") is True:
-                            # если нет новых фото — пропускаем, иначе не отправляем повторно
-                            if not (photo1 or photo2 or model):
-                                logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
-                                continue
-                            else:
-                                logger.info(f"⏩ Обнаружены новые файлы, не отправляем старый результат {user_id}")
-                                continue
-
-# Опционально: лог, если статус не "В обработке", но всё равно продолжаем
-                        if user_row.get("status") != "В обработке":
-                            logger.warning(f"⚠️ Статус пользователя {user_id} = '{user_row.get('status')}', но отправляем результат, т.к. ready=False")
+                        if user_row.get("ready"):
+                            logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
+                            continue
 
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
@@ -1470,8 +1433,13 @@ async def check_results():
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
+        user_id = callback_query.from_user.id
+        
+        # Сбрасываем флаги обработки для пользователя
+        await supabase_api.reset_flags(user_id)
+        
         await send_welcome(
-            callback_query.from_user.id,
+            user_id,
             callback_query.from_user.username,
             callback_query.from_user.full_name
         )
