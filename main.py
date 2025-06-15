@@ -916,9 +916,9 @@ async def check_results():
 
             await asyncio.sleep(30)
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                            continue
+                            except Exception as e:
+                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+                        continue
 
             await asyncio.sleep(30)
 
