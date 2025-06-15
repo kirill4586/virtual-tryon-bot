@@ -1202,7 +1202,8 @@ async def check_results():
         try:
             logger.info("🔍 Scanning for ready results in Supabase...")
 
-            user_dirs = await supabase_api.list_user_ids_with_result()
+            folders = supabase.storage.from_(UPLOADS_BUCKET).list()
+            user_dirs = [f['name'].rstrip('/') for f in folders if f['name'].isdigit()]
             for user_id in user_dirs:
                 user_dir = os.path.join(UPLOAD_DIR, str(user_id))
                 os.makedirs(user_dir, exist_ok=True)
@@ -1286,10 +1287,6 @@ async def check_results():
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-
-        except Exception as e:
-            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
-            await asyncio.sleep(30)
 
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
