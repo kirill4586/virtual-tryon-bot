@@ -1272,12 +1272,11 @@ async def check_results():
                 
 
                 if result_files:
-    result_file = os.path.join(user_dir, result_files[0])
-
+                    result_file = os.path.join(user_dir, result_files[0])  # <-- Отступ здесь
     try:
         user_id = int(user_id_str)
-        user_row = await supabase_api.get_user_row(user_id)  # <-- Теперь внутри блока try
-
+        user_row = await supabase_api.get_user_row(user_id)
+        
         if not user_row or user_row.get("status") != "В обработке" or user_row.get("ready") is True:
             logger.info(f"⏩ Пропускаем отправку: статус неактивный или уже получен ({user_id})")
             continue
