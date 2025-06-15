@@ -170,7 +170,6 @@ class SupabaseAPI:
 
     async def check_and_update_access(self, user_id: int):
         """Проверяет доступ пользователя и обновляет количество примерок"""
-        try:
             row = await self.get_user_row(user_id)
             if not row:
                 return 0
@@ -217,7 +216,6 @@ class SupabaseAPI:
 
     async def decrement_tries(self, user_id: int):
         """Уменьшает количество примерок на 1 и вычитает стоимость из суммы"""
-        try:
             row = await self.get_user_row(user_id)
             if not row:
                 return False
@@ -258,7 +256,6 @@ class SupabaseAPI:
 
     async def send_payment_update_notifications(self, user_id: int, new_amount: float, new_tries: int, reason: str):
         """Отправляет уведомления об изменении баланса"""
-        try:
             # Получаем данные пользователя
             user_row = await self.get_user_row(user_id)
             if not user_row:
@@ -296,7 +293,6 @@ class SupabaseAPI:
 
     async def upsert_row(self, user_id: int, username: str, data: dict):
         """Создает или обновляет запись пользователя в Supabase"""
-        try:
             row = await self.get_user_row(user_id)
             data.update({
                 "user_id": str(user_id),
@@ -361,7 +357,6 @@ class SupabaseAPI:
 
     async def initialize_user(self, user_id: int, username: str):
         """Инициализирует пользователя в базе данных без начального баланса"""
-        try:
             # Проверяем, есть ли уже пользователь в базе
             user_row = await self.get_user_row(user_id)
             
@@ -395,7 +390,6 @@ async def cleanup_resources():
 
 async def on_shutdown():
     """Обработчик завершения работы"""
-    try:
         logger.info("Shutting down...")
         
         tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -419,7 +413,6 @@ async def upload_to_supabase(file_path: str, user_id: int, file_type: str):
     if not supabase:
         return False
     
-    try:
         file_name = os.path.basename(file_path)
         destination_path = f"{user_id}/{file_type}/{file_name}"
         
@@ -493,7 +486,6 @@ async def get_examples_list():
         logger.warning("Supabase client not available")
         return []
     
-    try:
         res = supabase.storage.from_(EXAMPLES_BUCKET).list()
         logger.info(f"Supabase storage response for examples: {res}")
         
@@ -515,7 +507,6 @@ async def get_examples_list():
 
 async def send_examples_page(chat_id: int, page: int = 0):
     """Отправляет страницу с примерами"""
-    try:
         examples = await get_examples_list()
         if not examples:
             await bot.send_message(chat_id, "📸 Примеры работ временно недоступны")
@@ -577,7 +568,6 @@ async def get_models_list(category: str):
         logger.info(f"Using cached models for {category}")
         return models_cache[category]["data"]
     
-    try:
         res = supabase.storage.from_(MODELS_BUCKET).list(category)
         logger.info(f"Supabase storage response for {category}: {res}")
         
@@ -615,7 +605,6 @@ async def notify_admin(message: str):
 
 async def send_welcome(user_id: int, username: str, full_name: str):
     """Отправка приветственного сообщения"""
-    try:
         # Инициализируем пользователя (если нужно)
         await supabase_api.initialize_user(user_id, username)
         
@@ -696,7 +685,6 @@ async def choose_model(callback_query: types.CallbackQuery):
             logger.warning("Callback query expired for processing check")
         return
         
-    try:
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
             [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
@@ -759,7 +747,6 @@ async def show_category_models(callback_query: types.CallbackQuery):
         for model in current_models:
             model_name = os.path.splitext(model)[0]
             
-            try:
                 image_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{category}/{model}")
                 
                 await bot.send_photo(
@@ -833,7 +820,6 @@ async def model_selected(callback_query: types.CallbackQuery):
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
-    try:
         await callback_query.message.delete()
         
         clothes_photo_exists = any(
@@ -848,7 +834,6 @@ async def model_selected(callback_query: types.CallbackQuery):
         })
         
         if supabase:
-            try:
                 model_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{model_path}")
                 
                 model_path_local = os.path.join(user_dir, "selected_model.jpg")
@@ -857,6 +842,12 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
+                # Удаляем старые result-файлы перед новой примеркой
+                for f in os.listdir(user_dir):
+                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
+                        os.remove(os.path.join(user_dir, f))
+                        logger.info(f"🗑️ Удален старый результат: {f}")
+
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
                 
@@ -903,14 +894,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                 )
                 await callback_query.answer()
                 return
-            
-    except Exception as e:
-        logger.error(f"Error in model_selected: {e}")
-        await bot.send_message(
-            user_id,
-            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
-        )
-        await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
@@ -938,6 +921,7 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         logger.error(f"Error in back_to_menu: {e}")
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
         await callback_query.answer()
+
 @dp.callback_query(F.data.startswith("more_examples_"))
 async def more_examples(callback_query: types.CallbackQuery):
     """Загрузка дополнительных примеров"""
@@ -952,7 +936,6 @@ async def more_examples(callback_query: types.CallbackQuery):
 
 async def process_photo(message: types.Message, user: types.User, user_dir: str):
     """Обработка и сохранение фотографии"""
-    try:
         user_id = user.id
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
         os.makedirs(user_dir, exist_ok=True)
@@ -1086,7 +1069,6 @@ async def handle_photo(message: types.Message):
 
 async def show_balance_info(user: types.User):
     """Показывает информацию о балансе пользователя"""
-    try:
         # Получаем данные пользователя из Supabase
         user_row = await supabase_api.get_user_row(user.id)
         
@@ -1123,7 +1105,6 @@ async def show_balance_info(user: types.User):
 
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
-    try:
         # Формируем сообщение для DonationAlerts (username и ID)
         payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
         encoded_message = quote(payment_message)
@@ -1213,7 +1194,6 @@ async def check_results():
     """Проверяет наличие результатов для отправки пользователям"""
     logger.info("🔄 Starting check_results() loop...")
     while True:
-        try:
             logger.info("🔍 Scanning for results...")
 
             if not os.path.exists(UPLOAD_DIR):
@@ -1243,7 +1223,6 @@ async def check_results():
                 # Если не найдено локально — пробуем скачать из Supabase
                 if not result_files:
                     for ext in SUPPORTED_EXTENSIONS:
-                        try:
                             result_supabase_path = f"{user_id_str}/result{ext}"
                             result_file_local = os.path.join(user_dir, f"result{ext}")
                             os.makedirs(user_dir, exist_ok=True)
@@ -1261,7 +1240,6 @@ async def check_results():
                 # Если файлы найдены, обрабатываем первый подходящий
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
-                    try:
                         user_id = int(user_id_str)
                         user_row = await supabase_api.get_user_row(user_id)
                         
@@ -1329,7 +1307,6 @@ async def check_results():
                                 logger.error(f"Error sending admin notification: {e}")
 
                         # Загружаем результат в Supabase с новым уникальным именем
-                        try:
                             file_ext = os.path.splitext(result_file)[1].lower()
                             supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
 
@@ -1365,7 +1342,6 @@ async def check_results():
                             logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
 
                         # Удаляем все файлы пользователя из Supabase
-                        try:
                             base = supabase.storage.from_(UPLOADS_BUCKET)
                             files_to_delete = []
 
@@ -1423,7 +1399,6 @@ async def check_results():
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
-    try:
         user_id = callback_query.from_user.id
         
         # Сбрасываем флаги обработки для пользователя
@@ -1455,7 +1430,6 @@ async def monitor_payment_changes_task():
     """Фоновая задача для мониторинга изменений payment_amount"""
     logger.info("Starting payment amount monitoring task...")
     while True:
-        try:
             # Получаем всех пользователей из базы данных
             res = supabase.table(USERS_TABLE)\
                 .select("user_id, payment_amount, username")\
@@ -1540,7 +1514,6 @@ async def start_web_server():
 
 async def main():
     """Основная функция запуска бота"""
-    try:
         logger.info("Starting bot...")
         
         # Запуск веб-сервера
@@ -1562,7 +1535,7 @@ async def main():
         
         # Бесконечный цикл
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(3600)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")
