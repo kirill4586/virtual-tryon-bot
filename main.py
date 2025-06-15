@@ -1331,11 +1331,12 @@ async def check_results():
                             "username": current_username
                         })
     logger.info(f"📂 Пытаемся удалить папку {user_dir}")
-    try:
-        shutil.rmtree(user_dir)
-        logger.info(f"🧹 Удалена папка {user_dir}")
-    except Exception as cleanup_error:
-        logger.error(f"❌ Не удалось удалить папку {user_dir}: {cleanup_error}")
+    try: 
+       shutil.rmtree(user_dir) 
+       logger.info(f"🧹 Удалена папка {user_dir}") 
+    except Exception as cleanup_error: 
+       logger.error(f"❌ Не удалось удалить папку {user_dir}: 
+    {cleanup_error}")
 
                 finally:
                     # ✅ Удаляем .lock файл после обработки
