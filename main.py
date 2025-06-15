@@ -1271,8 +1271,8 @@ async def check_results():
 
                 
 
-                if result_files:
-                    result_file = os.path.join(user_dir, result_files[0])  # <-- Отступ здесь
+if result_files:
+    result_file = os.path.join(user_dir, result_files[0])
     try:
         user_id = int(user_id_str)
         user_row = await supabase_api.get_user_row(user_id)
@@ -1284,6 +1284,20 @@ async def check_results():
         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
             continue
+
+        if os.path.getsize(result_file) == 0:
+            logger.warning(f"🚫 Файл {result_file} пуст")
+            continue
+
+        logger.info(f"📤 Отправляем результат для {user_id}")
+
+        photo = FSInputFile(result_file)
+        
+        # ... остальной код ...
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
+        continue
 
         if os.path.getsize(result_file) == 0:
             logger.warning(f"🚫 Файл {result_file} пуст")
