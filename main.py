@@ -903,13 +903,12 @@ async def model_selected(callback_query: types.CallbackQuery):
                 
             except Exception as e:
                 logger.error(f"Error downloading model: {e}")
-                    await bot.send_message(  # <-- Лишний отступ здесь!
-                        user_id,
-                        "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
-                    )
+                await bot.send_message(
+                    user_id,
+                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
+                )
                 await callback_query.answer()
                 return
-            except Exception as e:  # <-- Этот except лишний или неправильно расположен
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
