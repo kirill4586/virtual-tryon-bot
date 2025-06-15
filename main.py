@@ -1212,7 +1212,6 @@ async def check_results():
                 if not os.path.isdir(user_dir):
                     continue
 
-                # ✅ Используем .lock-файл для защиты от параллельной обработки
                 lock_file = os.path.join(user_dir, ".lock")
                 if os.path.exists(lock_file):
                     logger.info(f"⏸️ Пропускаем {user_id_str}, т.к. идет обработка (lock файл)")
@@ -1259,9 +1258,6 @@ async def check_results():
 
                         current_username = user_row.get('username', '') if user_row else ''
 
-                        # ✅ Сразу ставим ready=True перед отправкой
-                        # (ready=True будет установлен только после успешной отправки)
-
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             continue
 
@@ -1300,15 +1296,6 @@ async def check_results():
                             reply_markup=keyboard
                         )
 
-                        # ✅ Обновляем базу только после успешной отправки
-                        await supabase_api.upsert_row(user_id, current_username, {
-                            "status": "Результат отправлен",
-                            "result_sent": True,
-                            "ready": True,
-                            "result_url": supabase_path if 'supabase_path' in locals() else None,
-                            "username": current_username
-                        })
-
                         # Загружаем результат в Supabase
                         try:
                             file_ext = os.path.splitext(result_file)[1].lower()
@@ -1323,6 +1310,7 @@ async def check_results():
                         except Exception as upload_error:
                             logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
 
+                        # ✅ Обновляем базу только после успешной отправки
                         await supabase_api.upsert_row(user_id, current_username, {
                             "status": "Результат отправлен",
                             "result_sent": True,
@@ -1330,15 +1318,15 @@ async def check_results():
                             "result_url": supabase_path if 'supabase_path' in locals() else None,
                             "username": current_username
                         })
-    logger.info(f"📂 Пытаемся удалить папку {user_dir}")
-    try: 
-       shutil.rmtree(user_dir) 
-       logger.info(f"🧹 Удалена папка {user_dir}") 
-    except Exception as cleanup_error: 
-       logger.error(f"❌ Не удалось удалить папку {user_dir}: {cleanup_error}")
+
+                        logger.info(f"📂 Пытаемся удалить папку {user_dir}")
+                        try:
+                            shutil.rmtree(user_dir)
+                            logger.info(f"🧹 Удалена папка {user_dir}")
+                        except Exception as cleanup_error:
+                            logger.error(f"❌ Не удалось удалить папку {user_dir}: {cleanup_error}")
 
                 finally:
-                    # ✅ Удаляем .lock файл после обработки
                     if os.path.exists(lock_file):
                         try:
                             os.remove(lock_file)
@@ -1350,13 +1338,6 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
-
-        except Exception as e:
-            logger.error(f"❌ Критическая ошибка в check_results(): {e}")
-            await asyncio.sleep(30)
-
-
-
 
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
