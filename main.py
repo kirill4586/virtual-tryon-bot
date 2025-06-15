@@ -903,12 +903,12 @@ async def model_selected(callback_query: types.CallbackQuery):
                 
             except Exception as e:
                 logger.error(f"Error downloading model: {e}")
-                    await bot.send_message(
-                        user_id,
-                        "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
-                    )
-                    await callback_query.answer()
-                    return
+                await bot.send_message(
+                    user_id,
+                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
+                )
+                await callback_query.answer()
+                return
                 
         except Exception as e:
             logger.error(f"Error in model_selected: {e}")
