@@ -1260,9 +1260,17 @@ async def check_results():
                         user_id = int(user_id_str)
                         user_row = await supabase_api.get_user_row(user_id)
                         
-                        if not user_row or user_row.get("status") != "В обработке" or user_row.get("ready") is True:
-                            logger.info(f"⏩ Пропускаем отправку: статус неактивный или уже получен ({user_id})")
+                        if not user_row:
+                            logger.info(f"⏩ Пропускаем отправку: данные пользователя не найдены ({user_id})")
                             continue
+
+                        if user_row.get("ready") is True:
+                            logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
+                            continue
+
+# Опционально: лог, если статус не "В обработке", но всё равно продолжаем
+                        if user_row.get("status") != "В обработке":
+                            logger.warning(f"⚠️ Статус пользователя {user_id} = '{user_row.get('status')}', но отправляем результат, т.к. ready=False")
 
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
