@@ -858,10 +858,23 @@ async def model_selected(callback_query: types.CallbackQuery):
                 logger.info(f"Model {model_path} downloaded successfully")
                 
                 # Удаляем старые result-файлы перед новой примеркой
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
+
                 for f in os.listdir(user_dir):
                     if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
                         os.remove(os.path.join(user_dir, f))
                         logger.info(f"🗑️ Удален старый результат: {f}")
+
+                
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
 
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
@@ -1000,6 +1013,12 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
 
         # Удаляем старые result-файлы перед новой примеркой
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
+
         for f in os.listdir(user_dir):
             if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
                 os.remove(os.path.join(user_dir, f))
@@ -1264,9 +1283,18 @@ async def check_results():
                             logger.info(f"⏩ Пропускаем отправку: данные пользователя не найдены ({user_id})")
                             continue
 
+                        photo1 = os.path.exists(os.path.join(user_dir, "photo_1.jpg"))
+                        photo2 = os.path.exists(os.path.join(user_dir, "photo_2.jpg"))
+                        model = os.path.exists(os.path.join(user_dir, "selected_model.jpg"))
+
                         if user_row.get("ready") is True:
-                            logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
-                            continue
+                            # если нет новых фото — пропускаем, иначе не отправляем повторно
+                            if not (photo1 or photo2 or model):
+                                logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
+                                continue
+                            else:
+                                logger.info(f"⏩ Обнаружены новые файлы, не отправляем старый результат {user_id}")
+                                continue
 
 # Опционально: лог, если статус не "В обработке", но всё равно продолжаем
                         if user_row.get("status") != "В обработке":
