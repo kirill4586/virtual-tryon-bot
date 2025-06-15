@@ -857,12 +857,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
-                # Удаляем старые result-файлы перед новой примеркой
-                for f in os.listdir(user_dir):
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
-                        os.remove(os.path.join(user_dir, f))
-                        logger.info(f"🗑️ Удален старый результат: {f}")
-
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
                 
@@ -909,6 +903,14 @@ async def model_selected(callback_query: types.CallbackQuery):
                 )
                 await callback_query.answer()
                 return
+            
+    except Exception as e:
+        logger.error(f"Error in model_selected: {e}")
+        await bot.send_message(
+            user_id,
+            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
+        )
+        await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
@@ -936,7 +938,6 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         logger.error(f"Error in back_to_menu: {e}")
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
         await callback_query.answer()
-
 @dp.callback_query(F.data.startswith("more_examples_"))
 async def more_examples(callback_query: types.CallbackQuery):
     """Загрузка дополнительных примеров"""
