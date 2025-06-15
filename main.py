@@ -966,50 +966,34 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
         # Определяем тип фото (одежда или человек)
 # Проверяем Supabase напрямую
-    try:
-        supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
-        existing = [f['name'] for f in supabase_files]
-    except Exception as e:
-        logger.warning(f"⚠️ Ошибка чтения файлов из Supabase для {user_id}: {e}")
-        existing = []
-    photo_type = 1
-    filename = f"photo_1{os.path.splitext(file_path)[1]}"
-    caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
-            InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
-        ]
-    ])
-elif "photo_2.jpg" not in existing:
-    photo_type = 2
-    filename = f"photo_2{os.path.splitext(file_path)[1]}"
-    caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
-    keyboard = None
-    await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
-else:
-    await message.answer("❗ Вы уже загрузили оба фото. Ожидайте результат.")
-    return
+        # Определяем тип фото (одежда или человек) — проверка по файлам в Supabase
+        try:
+            supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
+            existing = [f['name'] for f in supabase_files]
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка чтения файлов из Supabase для {user_id}: {e}")
+            existing = []
 
+        if "photo_1.jpg" not in existing:
+            photo_type = 1
+            filename = f"photo_1{os.path.splitext(file_path)[1]}"
             caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
-            
-            # Добавляем кнопки после получения фото одежды
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [
                     InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
                     InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
                 ]
             ])
-        else:
-            # Второе фото - человек
+        elif "photo_2.jpg" not in existing:
             photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
             keyboard = None
-
-            # Уведомление администратору о получении всех фото
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
-
+        else:
+            await message.answer("❗ Вы уже загрузили оба фото. Ожидайте результат.")
+            return
+			
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
         await bot.download_file(file_path, local_path)
