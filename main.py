@@ -910,7 +910,7 @@ async def model_selected(callback_query: types.CallbackQuery):
                 await callback_query.answer()
                 return
 
-@dp.callback_query(F.data.startswith("view_examples_")
+@dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -937,7 +937,7 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data.startswith("more_examples_")
+@dp.callback_query(F.data.startswith("more_examples_"))
 async def more_examples(callback_query: types.CallbackQuery):
     """Загрузка дополнительных примеров"""
     try:
@@ -1419,7 +1419,7 @@ async def check_results():
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-@dp.callback_query(F.data == "continue_tryon"))
+@dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
@@ -1439,7 +1439,7 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "show_payment_options"))
+@dp.callback_query(F.data == "show_payment_options")
 async def show_payment_options_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки показа вариантов оплаты"""
     try:
