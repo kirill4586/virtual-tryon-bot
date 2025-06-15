@@ -909,14 +909,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                 )
                 await callback_query.answer()
                 return
-                
-        except Exception as e:
-            logger.error(f"Error in model_selected: {e}")
-            await bot.send_message(
-                user_id,
-                "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
-            )
-            await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
