@@ -1269,16 +1269,19 @@ async def check_results():
 
                 # Если файлы найдены, обрабатываем первый подходящий
 
-                user_row = await supabase_api.get_user_row(user_id)
-                if not user_row or user_row.get("status") != "В обработке" or user_row.get("ready") is True:
-                    logger.info(f"⏩ Пропускаем отправку: статус неактивный или уже получен ({user_id})")
-                    continue
+                
 
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
 
                     try:
                         user_id = int(user_id_str)
+
+                user_row = await supabase_api.get_user_row(user_id)
+                if not user_row or user_row.get("status") != "В обработке" or user_row.get("ready") is True:
+                    logger.info(f"⏩ Пропускаем отправку: статус неактивный или уже получен ({user_id})")
+                    continue
+
 
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
@@ -1479,9 +1482,7 @@ async def monitor_payment_changes_task():
                     supabase_api.last_tries_values[user_id] = tries_left
                     
                     # Получаем данные пользователя
-                    user_row = await supabase_api.get_user_row(user_id)
-                    if not user_row:
-                        continue
+                    
                     
                     username = user_row.get('username', '') if user_row.get('username') else ''
                     
