@@ -858,14 +858,11 @@ async def model_selected(callback_query: types.CallbackQuery):
                 logger.info(f"Model {model_path} downloaded successfully")
                 
                 # Удаляем старые result-файлы перед новой примеркой
-        try:
-            await supabase_api.update_user_row(user_id, {
-                "ready": False,
-                "result_sent": False,
-                "result_url": None
-            })
-        except Exception as e:
-            logger.error(f"Ошибка сброса ready-флага: {e}")
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
 
         await supabase_api.update_user_row(user_id, {
             "ready": False,
@@ -886,14 +883,11 @@ async def model_selected(callback_query: types.CallbackQuery):
         })
 
                 
-        try:
-            await supabase_api.update_user_row(user_id, {
-                "ready": False,
-                "result_sent": False,
-                "result_url": None
-            })
-        except Exception as e:
-            logger.error(f"Ошибка сброса ready-флага: {e}")
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
 
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
@@ -1032,14 +1026,11 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
 
         # Удаляем старые result-файлы перед новой примеркой
-        try:
-            await supabase_api.update_user_row(user_id, {
-                "ready": False,
-                "result_sent": False,
-                "result_url": None
-            })
-        except Exception as e:
-            logger.error(f"Ошибка сброса ready-флага: {e}")
+        await supabase_api.update_user_row(user_id, {
+            "ready": False,
+            "result_sent": False,
+            "result_url": None
+        })
 
         await supabase_api.update_user_row(user_id, {
             "ready": False,
