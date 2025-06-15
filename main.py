@@ -95,6 +95,20 @@ dp = Dispatcher(storage=MemoryStorage())
 dp.update.middleware(CallbackTimeoutMiddleware())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
+
+# ✅ ДОБАВЛЕНО: Удаление старых результатов перед новой примеркой
+def delete_old_results(user_dir):
+    """Удаляет старые result-файлы из папки пользователя"""
+    try:
+        for f in os.listdir(user_dir):
+            if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
+                os.remove(os.path.join(user_dir, f))
+        logger.info(f"🗑️ Старые результаты удалены из {user_dir}")
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении старых результатов: {e}")
+
+
+
 # Кеш для списка моделей
 models_cache = {
     "man": {"time": 0, "data": []},
@@ -866,6 +880,8 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
+                delete_old_results(user_dir)  # Удаляем старые result-файлы перед новой примеркой
+
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
                 
@@ -1001,6 +1017,8 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
             # Уведомление администратору о получении всех фото
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
+
+        delete_old_results(user_dir)  # Удаляем старые result-файлы перед новой примеркой
 
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
@@ -1250,6 +1268,12 @@ async def check_results():
                             continue
 
                 # Если файлы найдены, обрабатываем первый подходящий
+
+                user_row = await supabase_api.get_user_row(user_id)
+                if not user_row or user_row.get("status") != "В обработке" or user_row.get("ready"):
+                    logger.info(f"⏩ Пропускаем отправку: статус неактивный или уже получен ({user_id})")
+                    continue
+
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
 
