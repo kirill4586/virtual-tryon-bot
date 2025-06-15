@@ -966,10 +966,12 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
 
         # Определяем тип фото (одежда или человек)
 # Проверяем Supabase напрямую
-supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
-existing = [f['name'] for f in supabase_files]
-
-if "photo_1.jpg" not in existing:
+try:
+    supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
+    existing = [f['name'] for f in supabase_files]
+except Exception as e:
+    logger.warning(f"⚠️ Ошибка чтения файлов из Supabase для {user_id}: {e}")
+    existing = []
     photo_type = 1
     filename = f"photo_1{os.path.splitext(file_path)[1]}"
     caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
