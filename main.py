@@ -1562,7 +1562,7 @@ async def main():
         
         # Бесконечный цикл
         while True:
-            await asyncio.sleep(3600)
+            await asyncio.sleep(10)
             
     except Exception as e:
         logger.error(f"Error in main: {e}")
