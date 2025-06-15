@@ -1059,18 +1059,12 @@ async def upload_person_handler(callback_query: types.CallbackQuery):
 
 @dp.message(F.photo)
 async def handle_photo(message: types.Message):
-    user = message.from_user
-    user_id = user.id
-
-    # 🔒 Блокировка: если уже в процессе
-    if await is_processing(user_id):
-        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-        return
-
-async def handle_photo(message: types.Message):
     """Обработчик фотографий"""
     user = message.from_user
     user_id = user.id
+    if await is_processing(user_id):
+        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
+        return
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
@@ -1201,9 +1195,7 @@ async def show_payment_options(user: types.User):
         await bot.send_message(
             user.id,
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
-        )
-
-@dp.callback_query(F.data == "check_balance")
+        )@dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки проверки баланса"""
     try:
