@@ -809,7 +809,7 @@ async def show_category_models(callback_query: types.CallbackQuery):
     finally:
         logger.info(f"show_category_models executed in {time.time() - start_time:.2f}s")
 
-@dp.callback_query(F.data.startswith("model_"))
+@dp.callback_query(F.data.startswith("model_")
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     user_id = callback_query.from_user.id
@@ -910,7 +910,7 @@ async def model_selected(callback_query: types.CallbackQuery):
                 await callback_query.answer()
                 return
 
-@dp.callback_query(F.data.startswith("view_examples_"))
+@dp.callback_query(F.data.startswith("view_examples_")
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
     try:
@@ -937,7 +937,7 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data.startswith("more_examples_"))
+@dp.callback_query(F.data.startswith("more_examples_")
 async def more_examples(callback_query: types.CallbackQuery):
     """Загрузка дополнительных примеров"""
     try:
@@ -1197,7 +1197,7 @@ async def show_payment_options(user: types.User):
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
 
-@dp.callback_query(F.data == "check_balance"))
+@dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки проверки баланса"""
     try:
