@@ -857,12 +857,6 @@ async def model_selected(callback_query: types.CallbackQuery):
                     f.write(res)
                 logger.info(f"Model {model_path} downloaded successfully")
                 
-                # Удаляем старые result-файлы перед новой примеркой
-                for f in os.listdir(user_dir):
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
-                        os.remove(os.path.join(user_dir, f))
-                        logger.info(f"🗑️ Удален старый результат: {f}")
-
                 # Загружаем модель в Supabase в папку uploads
                 await upload_to_supabase(model_path_local, user_id, "models")
                 
@@ -909,6 +903,14 @@ async def model_selected(callback_query: types.CallbackQuery):
                 )
                 await callback_query.answer()
                 return
+            
+    except Exception as e:
+        logger.error(f"Error in model_selected: {e}")
+        await bot.send_message(
+            user_id,
+            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
+        )
+        await callback_query.answer()
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
@@ -991,12 +993,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             # Уведомление администратору о получении всех фото
             await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
 
-        # Удаляем старые result-файлы перед новой примеркой
-        for f in os.listdir(user_dir):
-            if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS)):
-                os.remove(os.path.join(user_dir, f))
-                logger.info(f"🗑️ Удален старый результат: {f}")
-
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
         await bot.download_file(file_path, local_path)
@@ -1056,17 +1052,6 @@ async def handle_photo(message: types.Message):
     """Обработчик фотографий"""
     user = message.from_user
     user_id = user.id
-    
-    # Проверяем, не идет ли уже обработка для этого пользователя
-    user_row = await supabase_api.get_user_row(user_id)
-    if user_row and user_row.get("ready"):
-        # Если результат уже был отправлен, сбрасываем флаги
-        await supabase_api.reset_flags(user_id)
-    
-    if await is_processing(user_id):
-        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-        return
-        
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     os.makedirs(user_dir, exist_ok=True)
     
@@ -1139,7 +1124,9 @@ async def show_payment_options(user: types.User):
                 InlineKeyboardButton(
                     text="🔄 Мой баланс",
                     callback_data="check_balance"
-                ),
+                )
+            ],
+            [
                 InlineKeyboardButton(
                     text="🔙 Назад",
                     callback_data="back_to_menu"
@@ -1221,17 +1208,11 @@ async def check_results():
                 continue
 
             for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, str(user_id_str))
+                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
                 if not os.path.isdir(user_dir):
                     continue
 
                 logger.info(f"📁 Checking user dir: {user_dir}")
-
-                # Проверяем статус пользователя в базе данных
-                user_row = await supabase_api.get_user_row(int(user_id_str))
-                if user_row and user_row.get("ready"):
-                    logger.info(f"⏩ Пропускаем пользователя {user_id_str} - результат уже отправлен")
-                    continue
 
                 # Ищем result-файлы с любым поддерживаемым расширением
                 result_files = [
@@ -1260,17 +1241,9 @@ async def check_results():
                 # Если файлы найдены, обрабатываем первый подходящий
                 if result_files:
                     result_file = os.path.join(user_dir, result_files[0])
+
                     try:
                         user_id = int(user_id_str)
-                        user_row = await supabase_api.get_user_row(user_id)
-                        
-                        if not user_row:
-                            logger.info(f"⏩ Пропускаем отправку: данные пользователя не найдены ({user_id})")
-                            continue
-
-                        if user_row.get("ready"):
-                            logger.info(f"⏩ Пропускаем отправку: результат уже отправлен ({user_id})")
-                            continue
 
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
                             logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
@@ -1423,13 +1396,8 @@ async def check_results():
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
-        user_id = callback_query.from_user.id
-        
-        # Сбрасываем флаги обработки для пользователя
-        await supabase_api.reset_flags(user_id)
-        
         await send_welcome(
-            user_id,
+            callback_query.from_user.id,
             callback_query.from_user.username,
             callback_query.from_user.full_name
         )
@@ -1477,7 +1445,10 @@ async def monitor_payment_changes_task():
                     
                     # Получаем данные пользователя
                     user_row = await supabase_api.get_user_row(user_id)
-                    username = user_row.get('username', '') if user_row else ''
+                    if not user_row:
+                        continue
+                    
+                    username = user_row.get('username', '') if user_row.get('username') else ''
                     
                     # Обновляем доступ и количество попыток
                     await supabase_api.update_user_row(user_id, {
@@ -1567,13 +1538,6 @@ async def main():
         logger.error(f"Error in main: {e}")
         raise
 
-@dp.message()
-async def handle_everything_else(message: types.Message):
-    user_id = message.from_user.id
-
-    if await is_processing(user_id):
-        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-
 if __name__ == "__main__":
     try:
         loop = asyncio.new_event_loop()
@@ -1590,5 +1554,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-
-        
