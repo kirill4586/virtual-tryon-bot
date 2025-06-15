@@ -170,7 +170,7 @@ class SupabaseAPI:
 
     async def check_and_update_access(self, user_id: int):
         """Проверяет доступ пользователя и обновляет количество примерок"""
-            row = await self.get_user_row(user_id)
+        row = await self.get_user_row(user_id)
             if not row:
                 return 0
 
