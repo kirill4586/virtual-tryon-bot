@@ -1335,10 +1335,11 @@ async def check_results():
 
                 finally:
                     # ✅ Удаляем .lock файл после обработки
-                    try:
-                        os.remove(lock_file)
-                    except Exception as cleanup_error:
-                        logger.error(f"❌ Ошибка удаления lock-файла: {cleanup_error}")
+                    if os.path.exists(lock_file):
+                        try:
+                            os.remove(lock_file)
+                        except Exception as cleanup_error:
+                            logger.error(f"❌ Ошибка удаления lock-файла: {cleanup_error}")
 
             await asyncio.sleep(30)
 
