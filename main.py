@@ -1208,56 +1208,72 @@ async def check_results():
                 continue
 
             for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, user_id_str)
+                user_dir = os.path.join(UPLOAD_DIR, str(user_id_str))
                 if not os.path.isdir(user_dir):
                     continue
 
-                logger.info(f"📁 Checking user dir: {user_dir}")
+                # ✅ Используем .lock-файл для защиты от параллельной обработки
+                lock_file = os.path.join(user_dir, ".lock")
+                if os.path.exists(lock_file):
+                    logger.info(f"⏸️ Пропускаем {user_id_str}, т.к. идет обработка (lock файл)")
+                    continue
 
-                # Ищем result-файлы с любым поддерживаемым расширением
-                result_files = [
-                    f for f in os.listdir(user_dir)
-                    if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-                ]
+                try:
+                    with open(lock_file, "w") as f:
+                        f.write("locked")
 
-                # Если не найдено локально — пробуем скачать из Supabase
-                if not result_files:
-                    for ext in SUPPORTED_EXTENSIONS:
-                        try:
-                            result_supabase_path = f"{user_id_str}/result{ext}"
-                            result_file_local = os.path.join(user_dir, f"result{ext}")
-                            os.makedirs(user_dir, exist_ok=True)
+                    user_row = await supabase_api.get_user_row(int(user_id_str))
+                    if user_row and user_row.get("ready"):
+                        logger.info(f"⏩ Пропускаем пользователя {user_id_str} - результат уже отправлен")
+                        continue
 
-                            res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-                            with open(result_file_local, 'wb') as f:
-                                f.write(res)
+                    result_files = [
+                        f for f in os.listdir(user_dir)
+                        if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
+                    ]
 
-                            logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
-                            result_files = [f"result{ext}"]
-                            break
-                        except Exception:
+                    if not result_files:
+                        for ext in SUPPORTED_EXTENSIONS:
+                            try:
+                                result_supabase_path = f"{user_id_str}/result{ext}"
+                                result_file_local = os.path.join(user_dir, f"result{ext}")
+                                os.makedirs(user_dir, exist_ok=True)
+
+                                res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
+                                with open(result_file_local, 'wb') as f:
+                                    f.write(res)
+
+                                logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
+                                result_files = [f"result{ext}"]
+                                break
+                            except Exception:
+                                continue
+
+                    if result_files:
+                        result_file = os.path.join(user_dir, result_files[0])
+                        user_id = int(user_id_str)
+                        user_row = await supabase_api.get_user_row(user_id)
+
+                        if not user_row:
                             continue
 
-                # Если файлы найдены, обрабатываем первый подходящий
-                if result_files:
-                    result_file = os.path.join(user_dir, result_files[0])
+                        current_username = user_row.get('username', '') if user_row else ''
 
-                    try:
-                        user_id = int(user_id_str)
+                        # ✅ Сразу ставим ready=True перед отправкой
+                        await supabase_api.upsert_row(user_id, current_username, {
+                            "ready": True
+                        })
 
                         if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                            logger.warning(f"🚫 Файл {result_file} недоступен или не читается")
                             continue
 
                         if os.path.getsize(result_file) == 0:
-                            logger.warning(f"🚫 Файл {result_file} пуст")
                             continue
 
                         logger.info(f"📤 Отправляем результат для {user_id}")
 
                         photo = FSInputFile(result_file)
-                        
-                        # Создаем клавиатуру с кнопками
+
                         keyboard = InlineKeyboardMarkup(
                             inline_keyboard=[
                                 [
@@ -1286,111 +1302,43 @@ async def check_results():
                             reply_markup=keyboard
                         )
 
-                        # Получаем текущие данные пользователя, чтобы сохранить username
-                        user_row = await supabase_api.get_user_row(user_id)
-                        current_username = user_row.get('username', '') if user_row else ''
-
-                        # Уведомление администратору
-                        if ADMIN_CHAT_ID:
-                            try:
-                                await bot.send_message(
-                                    ADMIN_CHAT_ID,
-                                    f"✅ Пользователь @{current_username} ({user_id}) получил результат примерки"
-                                )
-                            except Exception as e:
-                                logger.error(f"Error sending admin notification: {e}")
-
-                        # Загружаем результат в Supabase с новым уникальным именем
+                        # Загружаем результат в Supabase
                         try:
                             file_ext = os.path.splitext(result_file)[1].lower()
                             supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-
                             with open(result_file, 'rb') as f:
                                 supabase.storage.from_(UPLOADS_BUCKET).upload(
                                     path=supabase_path,
                                     file=f,
                                     file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                          "image/png" if file_ext == '.png' else
-                                          "image/webp"}
+                                                  "image/png" if file_ext == '.png' else "image/webp"}
                                 )
-                            logger.info(f"☁️ Результат загружен в Supabase: {supabase_path}")
                         except Exception as upload_error:
                             logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
 
-                        # Обновляем Supabase, сохраняя username
-                        try:
-                            await supabase_api.upsert_row(user_id, current_username, {
-                                "status": "Результат отправлен",
-                                "result_sent": True,
-                                "ready": True,
-                                "result_url": supabase_path if 'supabase_path' in locals() else None,
-                                "username": current_username  # Явно сохраняем username
-                            })
-                        except Exception as db_error:
-                            logger.error(f"❌ Ошибка обновления Supabase: {db_error}")
+                        await supabase_api.upsert_row(user_id, current_username, {
+                            "status": "Результат отправлен",
+                            "result_sent": True,
+                            "ready": True,
+                            "result_url": supabase_path if 'supabase_path' in locals() else None,
+                            "username": current_username
+                        })
 
-                        # Полная очистка локальной папки пользователя
-                        try:
-                            shutil.rmtree(user_dir)
-                            logger.info(f"🗑️ Папка {user_dir} полностью удалена")
-                        except Exception as cleanup_error:
-                            logger.error(f"❌ Ошибка удаления папки: {cleanup_error}")
+                        shutil.rmtree(user_dir, ignore_errors=True)
 
-                        # Удаляем все файлы пользователя из Supabase
-                        try:
-                            base = supabase.storage.from_(UPLOADS_BUCKET)
-                            files_to_delete = []
-
-                            # Добавляем все возможные фото пользователя
-                            for ext in SUPPORTED_EXTENSIONS:
-                                files_to_delete.extend([
-                                    f"{user_id_str}/photos/photo_1{ext}",
-                                    f"{user_id_str}/photos/photo_2{ext}",
-                                    f"{user_id_str}/models/selected_model{ext}"
-                                ])
-
-                            # Добавляем result-файлы
-                            files_to_delete.extend([
-                                f"{user_id_str}/result{ext}" for ext in SUPPORTED_EXTENSIONS
-                            ])
-
-                            # Добавляем файлы из папки results
-                            try:
-                                result_files_in_supabase = base.list(f"{user_id_str}/results")
-                                for f in result_files_in_supabase:
-                                    if f['name'].startswith("result"):
-                                        files_to_delete.append(f"{user_id_str}/results/{f['name']}")
-                            except Exception as e:
-                                logger.warning(f"⚠️ Не удалось получить список result-файлов: {e}")
-
-                            # Удаляем только существующие файлы
-                            existing_files = []
-                            for file_path in files_to_delete:
-                                try:
-                                    base.download(file_path)
-                                    existing_files.append(file_path)
-                                except Exception:
-                                    continue
-
-                            if existing_files:
-                                logger.info(f"➡️ Удаляем из Supabase: {existing_files}")
-                                base.remove(existing_files)
-                                logger.info(f"🗑️ Удалены файлы пользователя {user_id_str} из Supabase: {len(existing_files)} шт.")
-                            else:
-                                logger.info(f"ℹ️ Нет файлов для удаления у пользователя {user_id_str}")
-
-                        except Exception as e:
-                            logger.error(f"❌ Ошибка удаления файлов пользователя {user_id_str} из Supabase: {e}")
-
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                        continue
+                finally:
+                    # ✅ Удаляем .lock файл после обработки
+                    try:
+                        os.remove(lock_file)
+                    except Exception as cleanup_error:
+                        logger.error(f"❌ Ошибка удаления lock-файла: {cleanup_error}")
 
             await asyncio.sleep(30)
 
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
