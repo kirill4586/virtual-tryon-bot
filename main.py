@@ -134,22 +134,6 @@ except Exception as e:
     logger.error(f"Failed to initialize Supabase: {e}")
     raise
 
-class UserProcessingState:
-    """Класс для отслеживания состояния обработки пользователей"""
-    processing_users = set()
-    
-    @classmethod
-    def is_user_processing(cls, user_id: int) -> bool:
-        return user_id in cls.processing_users
-    
-    @classmethod
-    def add_processing_user(cls, user_id: int):
-        cls.processing_users.add(user_id)
-        
-    @classmethod
-    def remove_processing_user(cls, user_id: int):
-        cls.processing_users.discard(user_id)
-
 class SupabaseAPI:
     def __init__(self):
         self.supabase = supabase
@@ -477,9 +461,6 @@ async def get_user_tries(user_id: int) -> int:
 
 async def is_processing(user_id: int) -> bool:
     """Проверка, идет ли обработка для пользователя"""
-    if UserProcessingState.is_user_processing(user_id):
-        return True
-        
     user_dir = os.path.join(UPLOAD_DIR, str(user_id))
     if not os.path.exists(user_dir):
         return False
@@ -677,48 +658,542 @@ async def send_welcome(user_id: int, username: str, full_name: str):
     except Exception as e:
         logger.error(f"Welcome error for {user_id}: {e}")
 
-async def show_payment_options(user: types.User):
-    """Показывает варианты оплаты пользователю"""
+@dp.message(Command("start"))
+@dp.message(F.text & ~F.text.regexp(r'^\d+$'))
+async def handle_start(message: types.Message):
+    """Обработчик команды /start"""
+    if await is_processing(message.from_user.id):
+        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
+        return
+        
+    await send_welcome(
+        message.from_user.id,
+        message.from_user.username,
+        message.from_user.full_name
+    )
+
+@dp.callback_query(F.data == "upload_clothes")
+async def upload_clothes_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки одежды"""
+    try:
+        await callback_query.message.answer(
+            "👕 <b>Нажмите на Скрепку 📎,рядом с сообщением и загрузите своё изображение Одежды для примерки.</b>\n"
+            "👇     👇     👇     👇    👇     👇"       
+        )       
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_clothes_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data == "choose_model")
+async def choose_model(callback_query: types.CallbackQuery):
+    """Выбор модели"""
+    if await is_processing(callback_query.from_user.id):
+        try:
+            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        except TelegramBadRequest:
+            logger.warning("Callback query expired for processing check")
+        return
+        
+    try:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
+            [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
+            [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
+        ])
+        
+        await callback_query.message.answer(
+            "👇 Выберите категорию моделей:",
+            reply_markup=keyboard
+        )
+        await callback_query.answer()
+        
+    except Exception as e:
+        logger.error(f"Error in choose_model: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("models_"))
+async def show_category_models(callback_query: types.CallbackQuery):
+    """Показывает модели выбранной категории"""
+    start_time = time.time()
+    try:
+        if await is_processing(callback_query.from_user.id):
+            try:
+                await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+            except TelegramBadRequest:
+                logger.warning("Callback query expired for processing check")
+            return
+            
+        data_parts = callback_query.data.split("_")
+        if len(data_parts) != 3:
+            await callback_query.answer("⚠️ Ошибка параметров", show_alert=True)
+            return
+            
+        category = data_parts[1]
+        page = int(data_parts[2])
+        
+        category_names = {
+            "man": "👨 Мужские модели",
+            "woman": "👩 Женские модели", 
+            "child": "🧒 Детские модели"
+        }
+        
+        models = await get_models_list(category)
+        logger.info(f"Models to display for {category}: {models}")
+        
+        if not models:
+            await callback_query.message.answer(f"❌ В данной категории пока нет доступных моделей.")
+            await callback_query.answer()
+            return
+
+        start_idx = page * MODELS_PER_PAGE
+        end_idx = start_idx + MODELS_PER_PAGE
+        current_models = models[start_idx:end_idx]
+        
+        if page == 0:
+            await callback_query.message.answer(f"{category_names.get(category, 'Модели')}:")
+            await callback_query.answer()
+
+        for model in current_models:
+            model_name = os.path.splitext(model)[0]
+            
+            try:
+                image_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{category}/{model}")
+                
+                await bot.send_photo(
+                    chat_id=callback_query.from_user.id,
+                    photo=image_url,
+                    caption=f"Модель: {model_name}",
+                    reply_markup=InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text="✅ Выбрать эту модель",
+                                    callback_data=f"model_{category}/{model}"
+                                )
+                            ]
+                        ]
+                    )
+                )
+            except Exception as e:
+                logger.error(f"Error displaying model {model}: {e}")
+                continue
+
+        if end_idx < len(models):
+            await callback_query.message.answer(
+                "Показать еще модели?",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="⬇️ Показать еще",
+                                callback_data=f"models_{category}_{page + 1}"
+                            )
+                        ]
+                    ]
+                )
+            )
+            await callback_query.answer()
+        else:
+            await callback_query.message.answer("✅ Это все доступные модели в данной категории.")
+            await callback_query.answer()
+
+    except Exception as e:
+        logger.error(f"Error in show_category_models: {e}")
+        try:
+            await callback_query.message.answer("⚠️ Ошибка при загрузке моделей. Попробуйте позже.")
+        except:
+            pass
+    finally:
+        logger.info(f"show_category_models executed in {time.time() - start_time:.2f}s")
+
+@dp.callback_query(F.data.startswith("model_"))
+async def model_selected(callback_query: types.CallbackQuery):
+    """Обработчик выбора конкретной модели"""
+    user_id = callback_query.from_user.id
+    
+    # Проверяем количество оставшихся примерок
+    tries_left = await get_user_tries(user_id)
+    if tries_left <= 0:
+        await show_payment_options(callback_query.from_user)
+        await callback_query.answer()
+        return
+        
+    if await is_processing(user_id):
+        try:
+            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+        except TelegramBadRequest:
+            logger.warning("Callback query expired for processing check")
+        return
+        
+    model_path = callback_query.data.replace("model_", "")
+    category, model_name = model_path.split('/')
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+    
+    try:
+        await callback_query.message.delete()
+        
+        clothes_photo_exists = any(
+            f.startswith("photo_1") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+            for f in os.listdir(user_dir)
+        )
+
+        model_display_name = os.path.splitext(model_name)[0]
+        await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
+            "model_selected": model_path,
+            "status": "model_selected"
+        })
+        
+        if supabase:
+            try:
+                model_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{model_path}")
+                
+                model_path_local = os.path.join(user_dir, "selected_model.jpg")
+                with open(model_path_local, 'wb') as f:
+                    res = supabase.storage.from_(MODELS_BUCKET).download(f"{model_path}")
+                    f.write(res)
+                logger.info(f"Model {model_path} downloaded successfully")
+                
+                # Загружаем модель в Supabase в папку uploads
+                await upload_to_supabase(model_path_local, user_id, "models")
+                
+                if clothes_photo_exists:
+                    response_text = (
+                        f"✅ Модель {model_display_name} выбрана.\n\n"
+                        "✅ Оба файла получены.\n"
+                        "🔄 Идёт примерка. Ожидайте результат!"
+                    )
+                    await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
+                        "photo_person": True,
+                        "status": "В обработке",
+                        "photo1_received": True,
+                        "photo2_received": True,
+                        "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
+                    })
+                    
+                    await supabase_api.decrement_tries(user_id)
+                    
+                    await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
+                else:
+                    response_text = (
+                        f"✅ Модель {model_display_name} выбрана.\n\n"
+                        "📸 Теперь отправьте фото одежды."
+                    )
+                    await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
+                        "photo1_received": False,
+                        "photo2_received": True
+                    })
+                
+                # Отправляем новое сообщение с фото модели в самый низ
+                await bot.send_photo(
+                    chat_id=user_id,
+                    photo=model_url,
+                    caption=response_text
+                )
+                await callback_query.answer()
+                
+            except Exception as e:
+                logger.error(f"Error downloading model: {e}")
+                await bot.send_message(
+                    user_id,
+                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
+                )
+                await callback_query.answer()
+                return
+            
+    except Exception as e:
+        logger.error(f"Error in model_selected: {e}")
+        await bot.send_message(
+            user_id,
+            "⚠️ Произошла ошибка при выборе модели. Попробуйте позже."
+        )
+        await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("view_examples_"))
+async def view_examples(callback_query: types.CallbackQuery):
+    """Просмотр примеров работ"""
+    try:
+        page = int(callback_query.data.split("_")[-1])
+        await send_examples_page(callback_query.from_user.id, page)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in view_examples: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data == "back_to_menu")
+async def back_to_menu(callback_query: types.CallbackQuery):
+    """Возврат в главное меню"""
+    try:
+        await send_welcome(
+            callback_query.from_user.id,
+            callback_query.from_user.username,
+            callback_query.from_user.full_name
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in back_to_menu: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.callback_query(F.data.startswith("more_examples_"))
+async def more_examples(callback_query: types.CallbackQuery):
+    """Загрузка дополнительных примеров"""
+    try:
+        page = int(callback_query.data.split("_")[-1])
+        await send_examples_page(callback_query.from_user.id, page)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in more_examples: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
+        await callback_query.answer()
+
+async def process_photo(message: types.Message, user: types.User, user_dir: str):
+    """Обработка и сохранение фотографии"""
     try:
         user_id = user.id
-        username = user.username or ""
-        
-        # Получаем текущий баланс пользователя
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+
+        # Получаем файл фотографии
+        photo = message.photo[-1]  # Берем фото наибольшего размера
+        file_id = photo.file_id
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+
+        # Определяем тип фото (одежда или человек)
+        existing_photos = [
+            f for f in os.listdir(user_dir)
+            if f.startswith("photo_") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
+        ]
+
+        if not existing_photos:
+            # Первое фото - одежда
+            photo_type = 1
+            filename = f"photo_1{os.path.splitext(file_path)[1]}"
+            caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
+            
+            # Добавляем кнопки после получения фото одежды
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
+                    InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
+                ]
+            ])
+        else:
+            # Второе фото - человек
+            photo_type = 2
+            filename = f"photo_2{os.path.splitext(file_path)[1]}"
+            caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
+            keyboard = None
+
+            # Уведомление администратору о получении всех фото
+            await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
+
+        # Сохраняем фото локально
+        local_path = os.path.join(user_dir, filename)
+        await bot.download_file(file_path, local_path)
+
+        # Загружаем фото в Supabase
+        await upload_to_supabase(local_path, user_id, "photos")
+
+        # Получаем текущие данные пользователя, чтобы сохранить username
         user_row = await supabase_api.get_user_row(user_id)
-        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row else 0.0
-        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row else 0
+        current_username = user_row.get('username', '') if user_row else (user.username or '')
+
+        # Обновляем статус в базе данных, сохраняя username
+        if photo_type == 1:
+            await supabase_api.upsert_row(user_id, current_username, {
+                "photo1_received": True,
+                "photo2_received": False,
+                "status": "Ожидается фото человека",
+                "username": current_username  # Явно сохраняем username
+            })
+        else:
+            await supabase_api.upsert_row(user_id, current_username, {
+                "photo1_received": True,
+                "photo2_received": True,
+                "status": "В обработке",
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "username": current_username  # Явно сохраняем username
+            })
+
+            await supabase_api.decrement_tries(user_id)
+
+        if keyboard:
+            await message.answer(caption, reply_markup=keyboard)
+        else:
+            await message.answer(caption)
+
+    except Exception as e:
+        logger.error(f"Error processing photo: {e}")
+        await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+        raise
+
+@dp.callback_query(F.data == "upload_person")
+async def upload_person_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки фото человека"""
+    try:
+        await callback_query.message.answer(
+            "<b>👤Нажмите на Скрепку📎, рядом с сообщением и загрузите фото Человека для примерки</b>\n"
+            "👇     👇     👇     👇    👇     👇"       
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_person_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    """Обработчик фотографий"""
+    user = message.from_user
+    user_id = user.id
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+    
+    try:
+        tries_left = await get_user_tries(user_id)
         
-        # Создаем клавиатуру с вариантами оплаты
+        if tries_left <= 0:
+            await show_payment_options(user)
+            return
+            
+        await process_photo(message, user, user_dir)
+        
+    except Exception as e:
+        logger.error(f"Error handling photo: {e}")
+        await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
+
+async def show_balance_info(user: types.User):
+    """Показывает информацию о балансе пользователя"""
+    try:
+        # Получаем данные пользователя из Supabase
+        user_row = await supabase_api.get_user_row(user.id)
+        
+        if not user_row:
+            await bot.send_message(user.id, "❌ Ваши данные не найдены. Пожалуйста, начните с команды /start")
+            return
+            
+        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
+        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row.get(TRIES_FIELD) else 0
+        status = user_row.get(STATUS_FIELD, "Неизвестно")
+        free_tries_used = bool(user_row.get(FREE_TRIES_FIELD, False))
+        
+        message_text = (
+            "💰 <b>Мой баланс:</b>\n\n"
+            f"💳 Сумма на счету: <b>{payment_amount} руб.</b>\n"
+            f"🎁 Доступно примерок: <b>{tries_left}</b>\n"
+            f"📊 Статус: <b>{status}</b>\n"
+            f"🆓 Бесплатная проверка: <b>{'использована' if free_tries_used else 'доступна'}</b>\n\n"
+            f"ℹ️ Стоимость одной примерки: <b>{PRICE_PER_TRY} руб.</b>"
+        )
+        
+        await bot.send_message(
+            user.id,
+            message_text,
+            parse_mode=ParseMode.HTML
+        )
+        
+    except Exception as e:
+        logger.error(f"Error showing balance info: {e}")
+        await bot.send_message(
+            user.id,
+            "❌ Ошибка при получении информации о балансе. Попробуйте позже."
+        )
+
+async def show_payment_options(user: types.User):
+    """Показывает варианты оплаты через DonationAlerts"""
+    try:
+        # Формируем сообщение для DonationAlerts (username и ID)
+        payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
+        encoded_message = quote(payment_message)
+        
+        # Создаем клавиатуру с кнопкой оплаты и проверки баланса
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Пополнить баланс",
-                    callback_data="payment_options"
+                    text="💳 Пополнить баланс", 
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💰 Мой баланс",
+                    text="🔄 Мой баланс",
                     callback_data="check_balance"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data="back_to_menu"
                 )
             ]
         ])
         
+        payment_text = (
+            "🚫 У вас закончились бесплатные примерки.\n\n"
+            "❤️Спасибо, что воспользовались нашей Виртуальной примерочной!!!🥰\n"
+            "Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку.\n"
+            "Сумма символическая, но которая поможет Вам стать стильными, модными и красивыми\n"
+            "👗👔🩳👙👠👞👒👟🧢🧤👛👜\n\n"
+            "📌 <b>Для продолжения примерок необходимо пополнить баланс:</b>\n\n"
+            "💰 <b>Тарифы:</b>\n"
+            f"- 30 руб = 1 примерка\n"
+            f"- 60 руб = 2 примерки\n"
+            f"- 90 руб = 3 примерки\n"
+            "и так далее...\n\n"
+            "1️⃣ Нажмите на кнопку 'Пополнить баланс (‼️Обязательно указать имя, читйате ‼️ВНИМАНИЕ)'\n\n"
+            "2️⃣ В поле оплаты указываете любую сумму не менее 30 руб (сколько хотите примерок)\n\n"
+            "3️⃣ Выбираете удобный способ оплаты (Карта или СБП)\n\n"
+            "4️⃣ В поле <b>e-mail</b> - укажите любую почту, можете свою, можете придумать(не имеет значения)\n\n"
+            "💥<b>ВСЁ!!!</b>💥\n\n"
+            "⚠️‼️ <b>ВНИМАНИЕ!</b> При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+            "👇👇👇👇👇👇👇👇👇👇\n"
+            f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
+            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n"
+            "‼️<b>Ничего не меняйте в сообщении‼️</b>\n\n"
+            "❓Свой баланс Вы можете отслеживать по кнопке 'Мой баланс'"
+        )
         await bot.send_message(
-            user_id,
-            f"❌ У вас закончились примерки!\n\n"
-            f"💳 Текущий баланс: {payment_amount} руб.\n"
-            f"🎁 Доступно примерок: {tries_left}\n\n"
-            f"Для продолжения работы пополните баланс:",
-            reply_markup=keyboard
+            user.id,
+            payment_text,
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
         
+        # Уведомление администратору о начале оплаты
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
+                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
+                )
+            except Exception as e:
+                logger.error(f"Error sending admin payment notification: {e}")
+                
     except Exception as e:
-        logger.error(f"Error in show_payment_options: {e}")
+        logger.error(f"Error sending payment options: {e}")
         await bot.send_message(
-            user_id,
-            "⚠️ Ошибка при загрузке информации о балансе. Попробуйте позже."
+            user.id,
+            "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
+
+@dp.callback_query(F.data == "check_balance")
+async def check_balance_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки проверки баланса"""
+    try:
+        await show_balance_info(callback_query.from_user)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in check_balance_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при проверке баланса. Попробуйте позже.")
+        await callback_query.answer()
 
 async def check_results():
     """Проверяет наличие результатов для отправки пользователям"""
@@ -810,9 +1285,6 @@ async def check_results():
                             caption="🎉 Ваша виртуальная примерка готова!",
                             reply_markup=keyboard
                         )
-
-                        # Удаляем пользователя из списка обрабатываемых
-                        UserProcessingState.remove_processing_user(user_id)
 
                         # Получаем текущие данные пользователя, чтобы сохранить username
                         user_row = await supabase_api.get_user_row(user_id)
@@ -916,31 +1388,13 @@ async def check_results():
 
             await asyncio.sleep(30)
 
-                    except Exception as e:
-                        logger.error(f"❌ Ошибка при отправке результата пользователю {user_id_str}: {e}")
-                        continue
-
-            await asyncio.sleep(30))
-
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
-@dp.callback_query(F.data.startswith("view_examples_"))
-async def view_examples_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки просмотра примеров"""
-    try:
-        page = int(callback_query.data.split("_")[-1])
-        await send_examples_page(callback_query.from_user.id, page)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in view_examples_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "back_to_menu")
-async def back_to_menu_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки возврата в меню"""
+@dp.callback_query(F.data == "continue_tryon")
+async def continue_tryon_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки продолжения примерки"""
     try:
         await send_welcome(
             callback_query.from_user.id,
@@ -949,120 +1403,161 @@ async def back_to_menu_handler(callback_query: types.CallbackQuery):
         )
         await callback_query.answer()
     except Exception as e:
-        logger.error(f"Error in back_to_menu_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data.startswith("more_examples_"))
-async def more_examples_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки 'посмотреть ещё' для примеров"""
-    try:
-        page = int(callback_query.data.split("_")[-1])
-        await send_examples_page(callback_query.from_user.id, page)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in more_examples_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "check_balance")
-async def check_balance_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки проверки баланса"""
-    try:
-        user_id = callback_query.from_user.id
-        user_row = await supabase_api.get_user_row(user_id)
-        
-        if user_row:
-            payment_amount = float(user_row.get(AMOUNT_FIELD, 0))
-            tries_left = int(user_row.get(TRIES_FIELD, 0))
-            status = user_row.get(STATUS_FIELD, "Неизвестно")
-            
-            message = (
-                f"💰 <b>Ваш баланс:</b>\n\n"
-                f"💳 Сумма: {payment_amount} руб.\n"
-                f"🎁 Доступно примерок: {tries_left}\n"
-                f"📊 Статус: {status}"
-            )
-        else:
-            message = "❌ Информация о балансе не найдена"
-            
-        await callback_query.message.answer(message)
-        await callback_query.answer()
-        
-    except Exception as e:
-        logger.error(f"Error in check_balance_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при проверке баланса. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "continue_tryon")
-async def continue_tryon_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки продолжения примерки"""
-    try:
-        user_id = callback_query.from_user.id
-        tries_left = await get_user_tries(user_id)
-        
-        if tries_left > 0:
-            await send_welcome(
-                callback_query.from_user.id,
-                callback_query.from_user.username,
-                callback_query.from_user.full_name
-            )
-        else:
-            await show_payment_options(callback_query.from_user)
-            
-        await callback_query.answer()
-    except Exception as e:
         logger.error(f"Error in continue_tryon_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
+@dp.callback_query(F.data == "show_payment_options")
+async def show_payment_options_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки показа вариантов оплаты"""
+    try:
+        await show_payment_options(callback_query.from_user)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in show_payment_options_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
 async def monitor_payment_changes_task():
-    """Фоновая задача для мониторинга изменений платежей"""
+    """Фоновая задача для мониторинга изменений payment_amount"""
+    logger.info("Starting payment amount monitoring task...")
     while True:
         try:
-            # Получаем всех пользователей с платежами
+            # Получаем всех пользователей из базы данных
             res = supabase.table(USERS_TABLE)\
-                .select("*")\
-                .neq(AMOUNT_FIELD, 0)\
+                .select("user_id, payment_amount, username")\
                 .execute()
             
-            for user in res.data:
-                user_id = int(user['user_id'])
-                current_amount = float(user[AMOUNT_FIELD])
-                last_amount = supabase_api.last_payment_amounts.get(user_id, 0)
+            current_payments = {int(user['user_id']): float(user['payment_amount']) 
+                              for user in res.data if user.get('payment_amount')}
+            
+            # Сравниваем с предыдущими значениями
+            for user_id, current_amount in current_payments.items():
+                previous_amount = supabase_api.last_payment_amounts.get(user_id, 0)
                 
-                # Если сумма изменилась
-                if current_amount != last_amount:
+                if current_amount != previous_amount:
+                    # Рассчитываем количество примерок
                     tries_left = int(current_amount / PRICE_PER_TRY)
+                    
+                    # Обновляем кэш
                     supabase_api.last_payment_amounts[user_id] = current_amount
                     supabase_api.last_tries_values[user_id] = tries_left
                     
-                    # Обновляем доступ
-                    await supabase_api.check_and_update_access(user_id)
+                    # Получаем данные пользователя
+                    user_row = await supabase_api.get_user_row(user_id)
+                    if not user_row:
+                        continue
+                    
+                    username = user_row.get('username', '') if user_row.get('username') else ''
+                    
+                    # Обновляем доступ и количество попыток
+                    await supabase_api.update_user_row(user_id, {
+                        ACCESS_FIELD: True if current_amount > 0 else False,
+                        TRIES_FIELD: tries_left,
+                        STATUS_FIELD: "Оплачено" if current_amount > 0 else "Не оплачено",
+                        FREE_TRIES_FIELD: True  # Помечаем, что бесплатная проверка использована
+                    })
+                    
+                    # Отправляем уведомления
+                    await supabase_api.send_payment_update_notifications(
+                        user_id,
+                        current_amount,
+                        tries_left,
+                        "Изменение баланса"
+                    )
             
-            await asyncio.sleep(60)  # Проверяем каждую минуту
+            await asyncio.sleep(5)  # Проверяем каждые 10 секунд
             
         except Exception as e:
-            logger.error(f"Error in monitor_payment_changes_task: {e}")
-            await asyncio.sleep(60)
+            logger.error(f"Error in payment monitoring task: {e}")
+            await asyncio.sleep(3)  # При ошибке ждем дольше
+
+async def handle(request):
+    """Обработчик корневого запроса"""
+    return web.Response(text="Bot is running")
+
+async def health_check(request):
+    """Обработчик health check"""
+    return web.Response(text="OK", status=200)
+
+def setup_web_server():
+    """Настройка веб-сервера"""
+    app = web.Application()
+    
+    app.router.add_get('/', handle)
+    app.router.add_get('/health', health_check)
+    app.router.add_post(f'/{BOT_TOKEN.split(":")[1]}', webhook_handler)
+    return app
+
+async def webhook_handler(request):
+    """Обработчик вебхука"""
+    try:
+        update = await request.json()
+        await dp.feed_webhook_update(bot, update)
+        return web.Response(text="OK")
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return web.Response(status=500, text="Internal Server Error")
+
+async def start_web_server():
+    """Запуск веб-сервера"""
+    app = setup_web_server()
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, '0.0.0.0', PORT)
+    await site.start()
+    logger.info(f"Web server started on port {PORT}")
 
 async def main():
-    """Основная функция для запуска бота"""
+    """Основная функция запуска бота"""
     try:
         logger.info("Starting bot...")
         
-        # Запускаем фоновые задачи
+        # Запуск веб-сервера
+        await start_web_server()
+        
+        # Установка вебхука
+        webhook_url = f"https://virtual-tryon-bot-3n0o.onrender.com/{BOT_TOKEN.split(':')[1]}"
+        await bot.set_webhook(
+            url=webhook_url,
+            drop_pending_updates=True,
+        )
+        logger.info(f"Webhook set to: {webhook_url}")
+        
+        # Запуск фоновой задачи проверки результатов
         asyncio.create_task(check_results())
+        
+        # Запуск мониторинга изменений payment_amount
         asyncio.create_task(monitor_payment_changes_task())
         
-        # Запускаем бота
-        await dp.start_polling(bot)
-        
+        # Бесконечный цикл
+        while True:
+            await asyncio.sleep(3600)
+            
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
-    finally:
-        await cleanup_resources()
+@dp.message(F.text)
+@dp.message(F.document)
+@dp.message(F.sticker)
+@dp.message(F.video)
+@dp.message(F.voice)
+@dp.message(F.animation)
+@dp.message(F.contact)
+@dp.message(F.location)
+@dp.message(F.dice)
+@dp.message(F.game)
+async def handle_blocked_message(message: types.Message):
+    """Блокирует любые действия, если пользователь в статусе 'в обработке'"""
+    user_id = message.from_user.id
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    is_locked = await is_processing(user_id)
+
+    if is_locked:
+        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
+    else:
+        await message.answer("👋 Отправьте фото одежды или начните командой /start.")
+		
 
 if __name__ == "__main__":
     try:
@@ -1080,13 +1575,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-		
-		
-		
-		
-		
-		
-		
-		
-		
-		
