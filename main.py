@@ -1196,144 +1196,96 @@ async def check_balance_handler(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 async def check_results():
-    """Проверяет наличие результатов для отправки пользователям"""
+    """Отслеживает загрузку result.jpg и отправляет его нужному клиенту"""
     logger.info("🔄 Starting check_results() loop...")
     while True:
         try:
-            logger.info("🔍 Scanning for results...")
+            logger.info("🔍 Scanning for ready results in Supabase...")
 
-            if not os.path.exists(UPLOAD_DIR):
-                logger.warning(f"Directory {UPLOAD_DIR} does not exist!")
-                await asyncio.sleep(10)
-                continue
+            user_dirs = await supabase_api.list_user_ids_with_result()
+            for user_id in user_dirs:
+                user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+                os.makedirs(user_dir, exist_ok=True)
 
-            for user_id_str in os.listdir(UPLOAD_DIR):
-                user_dir = os.path.join(UPLOAD_DIR, str(user_id_str))
-                if not os.path.isdir(user_dir):
+                user_row = await supabase_api.get_user_row(int(user_id))
+                if user_row and user_row.get("ready"):
+                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
                     continue
 
-                lock_file = os.path.join(user_dir, ".lock")
-                if os.path.exists(lock_file):
-                    logger.info(f"⏸️ Пропускаем {user_id_str}, т.к. идет обработка (lock файл)")
-                    continue
+                result_path = f"{user_id}/result.jpg"
+                result_file_local = os.path.join(user_dir, "result.jpg")
 
                 try:
-                    with open(lock_file, "w") as f:
-                        f.write("locked")
+                    res = supabase.storage.from_(UPLOADS_BUCKET).download(result_path)
+                    with open(result_file_local, 'wb') as f:
+                        f.write(res)
+                    logger.info(f"✅ Загружен result.jpg для {user_id}")
+                except Exception as e:
+                    logger.warning(f"⚠️ result.jpg ещё не загружен для {user_id}: {e}")
+                    continue
 
-                    user_row = await supabase_api.get_user_row(int(user_id_str))
-                    if user_row and user_row.get("ready"):
-                        logger.info(f"⏩ Пропускаем пользователя {user_id_str} - результат уже отправлен")
-                        continue
+                current_username = user_row.get("username", "") if user_row else ""
 
-                    result_files = [
-                        f for f in os.listdir(user_dir)
-                        if f.startswith("result") and f.lower().endswith(tuple(SUPPORTED_EXTENSIONS))
-                    ]
+                # Отправляем фото клиенту
+                try:
+                    photo = FSInputFile(result_file_local)
 
-                    if not result_files:
-                        for ext in SUPPORTED_EXTENSIONS:
-                            try:
-                                result_supabase_path = f"{user_id_str}/result{ext}"
-                                result_file_local = os.path.join(user_dir, f"result{ext}")
-                                os.makedirs(user_dir, exist_ok=True)
-
-                                res = supabase.storage.from_(UPLOADS_BUCKET).download(result_supabase_path)
-                                with open(result_file_local, 'wb') as f:
-                                    f.write(res)
-
-                                logger.info(f"✅ Скачан result{ext} из Supabase для пользователя {user_id_str}")
-                                result_files = [f"result{ext}"]
-                                break
-                            except Exception:
-                                continue
-
-                    if result_files:
-                        result_file = os.path.join(user_dir, result_files[0])
-                        user_id = int(user_id_str)
-                        user_row = await supabase_api.get_user_row(user_id)
-
-                        if not user_row:
-                            continue
-
-                        current_username = user_row.get('username', '') if user_row else ''
-
-                        if not os.path.isfile(result_file) or not os.access(result_file, os.R_OK):
-                            continue
-
-                        if os.path.getsize(result_file) == 0:
-                            continue
-
-                        logger.info(f"📤 Отправляем результат для {user_id}")
-
-                        photo = FSInputFile(result_file)
-
-                        keyboard = InlineKeyboardMarkup(
-                            inline_keyboard=[
-                                [
-                                    InlineKeyboardButton(
-                                        text="🔄 Продолжить примерку",
-                                        callback_data="continue_tryon"
-                                    )
-                                ],
-                                [
-                                    InlineKeyboardButton(
-                                        text="💳 Пополнить баланс",
-                                        callback_data="show_payment_options"
-                                    ),
-                                    InlineKeyboardButton(
-                                        text="💰 Мой баланс",
-                                        callback_data="check_balance"
-                                    )
-                                ]
-                            ]
-                        )
-
-                        await bot.send_photo(
-                            chat_id=user_id,
-                            photo=photo,
-                            caption="🎉 Ваша виртуальная примерка готова!",
-                            reply_markup=keyboard
-                        )
-
-                        # Загружаем результат в Supabase
-                        try:
-                            file_ext = os.path.splitext(result_file)[1].lower()
-                            supabase_path = f"{user_id}/results/result_{int(time.time())}{file_ext}"
-                            with open(result_file, 'rb') as f:
-                                supabase.storage.from_(UPLOADS_BUCKET).upload(
-                                    path=supabase_path,
-                                    file=f,
-                                    file_options={"content-type": "image/jpeg" if file_ext in ('.jpg', '.jpeg') else
-                                                  "image/png" if file_ext == '.png' else "image/webp"}
+                    keyboard = InlineKeyboardMarkup(
+                        inline_keyboard=[
+                            [
+                                InlineKeyboardButton(
+                                    text="🔄 Продолжить примерку",
+                                    callback_data="continue_tryon"
                                 )
-                        except Exception as upload_error:
-                            logger.error(f"❌ Ошибка загрузки результата в Supabase: {upload_error}")
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    text="💳 Пополнить баланс",
+                                    callback_data="show_payment_options"
+                                ),
+                                InlineKeyboardButton(
+                                    text="💰 Мой баланс",
+                                    callback_data="check_balance"
+                                )
+                            ]
+                        ]
+                    )
 
-                        # ✅ Обновляем базу только после успешной отправки
-                        await supabase_api.upsert_row(user_id, current_username, {
-                            "status": "Результат отправлен",
-                            "result_sent": True,
-                            "ready": True,
-                            "result_url": supabase_path if 'supabase_path' in locals() else None,
-                            "username": current_username
-                        })
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo,
+                        caption="🎉 Ваша виртуальная примерка готова!",
+                        reply_markup=keyboard
+                    )
+                except Exception as send_error:
+                    logger.error(f"❌ Ошибка отправки результата для {user_id}: {send_error}")
+                    continue
 
-                        logger.info(f"📂 Пытаемся удалить папку {user_dir}")
-                        try:
-                            shutil.rmtree(user_dir)
-                            logger.info(f"🧹 Удалена папка {user_dir}")
-                        except Exception as cleanup_error:
-                            logger.error(f"❌ Не удалось удалить папку {user_dir}: {cleanup_error}")
+                # Удаляем все связанные файлы из Supabase
+                try:
+                    supabase.storage.from_(UPLOADS_BUCKET).remove([
+                        f"{user_id}/result.jpg",
+                        f"{user_id}/photos/photo_1.jpg",
+                        f"{user_id}/photos/photo_2.jpg"
+                    ])
+                    logger.info(f"🧹 Удалены все файлы пользователя {user_id} из Supabase")
+                except Exception as e:
+                    logger.error(f"❌ Не удалось удалить файлы пользователя {user_id}: {e}")
 
-                finally:
-                    if os.path.exists(lock_file):
-                        try:
-                            os.remove(lock_file)
-                        except Exception as cleanup_error:
-                            logger.error(f"❌ Ошибка удаления lock-файла: {cleanup_error}")
+                # Обновляем статус в базе
+                await supabase_api.upsert_row(user_id, current_username, {
+                    "ready": True,
+                    "status": "Результат отправлен",
+                    "result_sent": True,
+                    "username": current_username
+                })
 
             await asyncio.sleep(30)
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка в check_results(): {e}")
+            await asyncio.sleep(30)
+
 
         except Exception as e:
             logger.error(f"❌ Критическая ошибка в check_results(): {e}")
