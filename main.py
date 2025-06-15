@@ -809,7 +809,16 @@ async def show_category_models(callback_query: types.CallbackQuery):
     finally:
         logger.info(f"show_category_models executed in {time.time() - start_time:.2f}s")
 
+
 @dp.callback_query(F.data.startswith("model_"))
+async def model_selected(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+
+    # 🔒 Блокировка: если уже в процессе
+    if await is_processing(user_id):
+        await callback_query.answer("✅ Оба файла получены. 🔄 Идёт примерка. Ожидайте результат!", show_alert=True)
+        return
+
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     user_id = callback_query.from_user.id
@@ -1047,7 +1056,17 @@ async def upload_person_handler(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
+
 @dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    user = message.from_user
+    user_id = user.id
+
+    # 🔒 Блокировка: если уже в процессе
+    if await is_processing(user_id):
+        await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
+        return
+
 async def handle_photo(message: types.Message):
     """Обработчик фотографий"""
     user = message.from_user
@@ -1537,29 +1556,18 @@ async def main():
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
-@dp.message(F.text)
-@dp.message(F.document)
-@dp.message(F.sticker)
-@dp.message(F.video)
-@dp.message(F.voice)
-@dp.message(F.animation)
-@dp.message(F.contact)
-@dp.message(F.location)
-@dp.message(F.dice)
-@dp.message(F.game)
-async def handle_blocked_message(message: types.Message):
-    """Блокирует любые действия, если пользователь в статусе 'в обработке'"""
-    user_id = message.from_user.id
-    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
-    is_locked = await is_processing(user_id)
 
-    if is_locked:
+
+@dp.message()
+async def handle_everything_else(message: types.Message):
+    user_id = message.from_user.id
+
+    if await is_processing(user_id):
         await message.answer("✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!")
-    else:
-        await message.answer("👋 Отправьте фото одежды или начните командой /start.")
-		
+
 
 if __name__ == "__main__":
+
     try:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
