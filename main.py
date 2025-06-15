@@ -809,7 +809,7 @@ async def show_category_models(callback_query: types.CallbackQuery):
     finally:
         logger.info(f"show_category_models executed in {time.time() - start_time:.2f}s")
 
-@dp.callback_query(F.data.startswith("model_")
+@dp.callback_query(F.data.startswith("model_"))
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     user_id = callback_query.from_user.id
