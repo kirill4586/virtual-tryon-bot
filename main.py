@@ -1292,15 +1292,17 @@ async def check_results():
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
+    user_id = callback_query.from_user.id
+
+    # Удаляем старые фото из Supabase
     try:
-	    user_id = callback_query.from_user.id
-		supabase.storage.from_(UPLOADS_BUCKET).remove([
-                f"{user_id}/photos/photo_1.jpg",
-                f"{user_id}/photos/photo_2.jpg"
-            ])
-            logger.info(f"🧹 Старые фото удалены для пользователя {user_id}")
-        except Exception as e:
-            logger.warning(f"⚠️ Не удалось удалить старые фото для {user_id}: {e}")
+        supabase.storage.from_(UPLOADS_BUCKET).remove([
+            f"{user_id}/photos/photo_1.jpg",
+            f"{user_id}/photos/photo_2.jpg"
+        ])
+        logger.info(f"🧹 Старые фото удалены для пользователя {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось удалить старые фото для {user_id}: {e}")
         await send_welcome(
             callback_query.from_user.id,
             callback_query.from_user.username,
