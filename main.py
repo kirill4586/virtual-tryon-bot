@@ -910,17 +910,20 @@ async def model_selected(callback_query: types.CallbackQuery):
                 await callback_query.answer()
                 return
 
-@dp.callback_query(F.data.startswith("view_examples_"))
-async def view_examples(callback_query: types.CallbackQuery):
-    """Просмотр примеров работ"""
-    try:
-        page = int(callback_query.data.split("_")[-1])
-        await send_examples_page(callback_query.from_user.id, page)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in view_examples: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
-        await callback_query.answer()
+try:
+    @dp.callback_query(F.data.startswith("view_examples_"))
+    async def view_examples(callback_query: types.CallbackQuery):
+        """Просмотр примеров работ"""
+        try:
+            page = int(callback_query.data.split("_")[-1])
+            await send_examples_page(callback_query.from_user.id, page)
+            await callback_query.answer()
+        except Exception as e:
+            logger.error(f"Error in view_examples: {e}")
+            await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
+            await callback_query.answer()
+except Exception as e:
+    logger.error(f"Error in view_examples registration: {e}")
 
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: types.CallbackQuery):
