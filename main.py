@@ -688,26 +688,24 @@ async def upload_clothes_handler(callback_query: types.CallbackQuery):
 
 @dp.callback_query(F.data == "choose_model")
 async def choose_model(callback_query: types.CallbackQuery):
-    """Выбор модели"""
-    if await is_processing(callback_query.from_user.id):
-        try:
-            await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-        except TelegramBadRequest:
-            logger.warning("Callback query expired for processing check")
-        return
-        
+    """Выбор модели без преждевременной проверки is_processing"""
     try:
+        user_id = callback_query.from_user.id
+
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
             [InlineKeyboardButton(text="👩 Женщины", callback_data="models_woman_0")],
+            [InlineKeyboardButton(text="👨 Мужчины", callback_data="models_man_0")],
             [InlineKeyboardButton(text="🧒 Дети", callback_data="models_child_0")]
         ])
-        
-        await callback_query.message.answer(
-            "👇 Выберите категорию моделей:",
-            reply_markup=keyboard
-        )
+
+        await callback_query.message.answer("👇 Выберите категорию моделей:", reply_markup=keyboard)
         await callback_query.answer()
+
+    except Exception as e:
+        logger.error(f"Error in choose_model: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
+        await callback_query.answer()
+
         
     except Exception as e:
         logger.error(f"Error in choose_model: {e}")
@@ -1299,6 +1297,7 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 
 
 
