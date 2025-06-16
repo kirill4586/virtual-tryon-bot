@@ -1211,17 +1211,17 @@ async def check_results():
 
                 user_row = await supabase_api.get_user_row(int(user_id))
                 if user_row and user_row.get("ready"):
-                    result_check_path = f"{user_id}/result.jpg"
-                try:
-                    supabase.storage.from_(UPLOADS_BUCKET).download(result_check_path)
-                    if not user_row.get("result_sent"):
+                    result_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}")
+                    result_names = [f["name"] for f in result_files]
+
+                    if "result.jpg" in result_names and not user_row.get("result_sent"):
                         logger.warning(f"⚠️ {user_id} помечен как ready, но результат не был отправлен — пробуем повторно")
+                    elif "result.jpg" not in result_names:
+                        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файла уже нет")
+                        continue
                     else:
                         logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
                         continue
-                except Exception:
-                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файла уже нет")
-                    continue
 
                 result_path = f"{user_id}/result.jpg"
                 result_file_local = os.path.join(user_dir, "result.jpg")
@@ -1299,6 +1299,7 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 
 
 
