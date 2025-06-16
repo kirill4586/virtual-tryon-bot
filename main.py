@@ -922,13 +922,6 @@ async def handle_pay_balance(callback_query: types.CallbackQuery):
     await callback_query.answer()
 
         # Очистка отключена — перенесена в check_results(), чтобы удаление происходило только после отправки результата
-
-    except Exception as e:
-        logger.error(f"❌ Ошибка при выборе модели: {e}")
-        await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
-        await callback_query.answer()
-
-        # Очистка отключена — перенесена в check_results(), чтобы удаление происходило только после отправки результата
       
 
 @dp.callback_query(F.data.startswith("view_examples_"))
