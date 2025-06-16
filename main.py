@@ -1211,7 +1211,7 @@ async def check_results():
 
                 user_row = await supabase_api.get_user_row(int(user_id))
                 if user_row and user_row.get("ready"):
-                result_check_path = f"{user_id}/result.jpg"
+                    result_check_path = f"{user_id}/result.jpg"
                 try:
                     supabase.storage.from_(UPLOADS_BUCKET).download(result_check_path)
                     if not user_row.get("result_sent"):
