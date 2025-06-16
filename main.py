@@ -845,8 +845,16 @@ async def model_selected(callback_query: types.CallbackQuery):
             "‼️Ничего не меняйте в сообщении‼️"
         )
         keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}")]]
-        )
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(text="💳 Оплатить", url=PAYMENT_LINK)
+        ],
+        [
+            InlineKeyboardButton(text="📋 Скопировать сообщение", callback_data="copy_payment_note")
+        ]
+    ]
+)
+
         await callback_query.message.answer(warning_text, reply_markup=keyboard)
 
         await show_payment_options(callback_query.from_user)
