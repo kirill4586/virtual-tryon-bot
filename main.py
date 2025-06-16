@@ -718,11 +718,11 @@ async def show_category_models(callback_query: types.CallbackQuery):
     start_time = time.time()
     try:
         if await is_processing(callback_query.from_user.id):
-            try:
-                await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-            except TelegramBadRequest:
-                logger.warning("Callback query expired for processing check")
-            return
+            #try:
+                #await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
+            #except TelegramBadRequest:
+                #logger.warning("Callback query expired for processing check")
+            #return
             
         data_parts = callback_query.data.split("_")
         if len(data_parts) != 3:
@@ -1297,6 +1297,8 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
+
 
 
 
