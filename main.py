@@ -856,37 +856,37 @@ async def model_selected(callback_query: types.CallbackQuery):
     category, model_name = model_path.split('/')
 
     # Загружаем файл модели из Supabase и сохраняем как photo_2.jpg
-    try:
-        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
-        os.makedirs(user_dir, exist_ok=True)
-        model_local_path = os.path.join(user_dir, "photo_2.jpg")
+# Загружаем файл модели из Supabase и сохраняем как photo_2.jpg
+try:
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+    model_local_path = os.path.join(user_dir, "photo_2.jpg")
 
-        res = supabase.storage.from_(MODELS_BUCKET).download(f"{category}/{model_name}")
-        with open(model_local_path, 'wb') as f:
-            f.write(res)
+    res = supabase.storage.from_(MODELS_BUCKET).download(f"{category}/{model_name}")
+    with open(model_local_path, 'wb') as f:
+        f.write(res)
 
-        logger.info(f"✅ Модель {model_name} загружена и сохранена как photo_2.jpg для пользователя {user_id}")
+    logger.info(f"✅ Модель {model_name} загружена и сохранена как photo_2.jpg для пользователя {user_id}")
 
-        # Показываем превью модели
-        model_preview = FSInputFile(model_local_path)
-        await bot.send_photo(
-            chat_id=user_id,
-            photo=model_preview,
-            caption="📸 Вы выбрали эту модель для примерки."
-        )
+    # Показываем превью модели
+    model_preview = FSInputFile(model_local_path)
+    await bot.send_photo(
+        chat_id=user_id,
+        photo=model_preview,
+        caption="📸 Вы выбрали эту модель для примерки."
+    )
 
-        # Загружаем файл модели как photo_2 в Supabase
-        await upload_to_supabase(model_local_path, user_id, "photos")
+    # Загружаем файл модели как photo_2 в Supabase
+    await upload_to_supabase(model_local_path, user_id, "photos")
 
-        await callback_query.message.answer("✅ Модель выбрана. 🔄 Идёт примерка. Ожидайте результат!")
-        await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
-        await callback_query.answer()
-		
-   except Exception as e:
-        logger.error(f"❌ Ошибка при выборе модели: {e}")
-        await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
-        await callback_query.answer()
+    await callback_query.message.answer("✅ Модель выбрана. 🔄 Идёт примерка. Ожидайте результат!")
+    await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
+    await callback_query.answer()
 
+except Exception as e:
+    logger.error(f"❌ Ошибка при выборе модели: {e}")
+    await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
+    await callback_query.answer()
 
 @dp.callback_query(F.data == "pay_balance")
 async def handle_pay_balance(callback_query: types.CallbackQuery):
