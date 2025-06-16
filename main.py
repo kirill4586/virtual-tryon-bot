@@ -829,10 +829,19 @@ async def model_selected(callback_query: types.CallbackQuery):
         payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
         warning_text = (
             "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+
+
             "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f"<code>{payment_note}</code>\n\n"
+
+
+            f"<code>{payment_note}</code>М\n\n"
+
+
             "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+
+
             "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
+
             "‼️Ничего не меняйте в сообщении‼️"
         )
         keyboard = InlineKeyboardMarkup(
@@ -890,74 +899,30 @@ async def model_selected(callback_query: types.CallbackQuery):
 
 @dp.callback_query(F.data == "pay_balance")
 async def handle_pay_balance(callback_query: types.CallbackQuery):
-    """Обработчик кнопки пополнения баланса"""
-    try:
-        username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-        
-        # Формируем сообщение с HTML-разметкой для жирного синего текста
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-            "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f'<b><span style="color: #0000FF;">{payment_note}</span></b>\n\n'
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
-            "‼️Ничего не меняйте в сообщении‼️"
-        )
-        
-        # Создаем клавиатуру с кнопкой оплаты
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="💳 Оплатить", 
-                        callback_data="confirm_payment"
-                    )
-                ]
-            ]
-        )
-        
-        await callback_query.message.answer(
-            warning_text, 
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        await callback_query.answer()
-        
-    except Exception as e:
-        logger.error(f"Error in handle_pay_balance: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
-        await callback_query.answer()
+    username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
+    payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
 
-@dp.callback_query(F.data == "confirm_payment")
-async def confirm_payment_handler(callback_query: types.CallbackQuery):
-    """Обработчик подтверждения оплаты"""
-    try:
-        user_id = callback_query.from_user.id
-        username = callback_query.from_user.username or f"id{user_id}"
-        
-        # Уведомление администратору
-        await notify_admin(f"💸 Клиент @{username} ({user_id}): Клиент оплачивает")
-        
-        # Создаем ссылку для оплаты с сообщением
-        payment_message = quote(f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}")
-        payment_url = f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={payment_message}"
-        
-        # Отправляем пользователю ссылку для оплаты
-        await callback_query.message.answer(
-            "✅ Вы можете произвести оплату по следующей ссылке:\n\n"
-            f"<a href='{payment_url}'>Ссылка для оплаты</a>\n\n"
-            "После успешной оплаты баланс будет зачислен автоматически.",
-            parse_mode=ParseMode.HTML,
-            disable_web_page_preview=True
-        )
-        
-        await callback_query.answer()
-        
-    except Exception as e:
-        logger.error(f"Error in confirm_payment_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке платежа. Попробуйте позже.")
-        await callback_query.answer()
+    warning_text = (
+        "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+        "👇👇👇👇👇👇👇👇👇👇\n\n"
+        f"<code>{payment_note}</code>\n\n"
+        "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+        "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
+        "‼️Ничего не меняйте в сообщении‼️"
+    )
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}")],
+            [InlineKeyboardButton(text="📋 Скопировать сообщение", callback_data="copy_payment_note")]
+        ]
+    )
+
+    await callback_query.message.answer(warning_text, reply_markup=keyboard)
+    await callback_query.answer()
+
+        # Очистка отключена — перенесена в check_results(), чтобы удаление происходило только после отправки результата
+      
 
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
@@ -1012,6 +977,8 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         file_path = file.file_path
 
         # Определяем тип фото (одежда или человек)
+# Проверяем Supabase напрямую
+        # Определяем тип фото (одежда или человек) — проверка по файлам в Supabase
         try:
             supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
             existing = [f['name'] for f in supabase_files]
@@ -1038,7 +1005,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         else:
             await message.answer("❗ Вы уже загрузили оба фото. Ожидайте результат.")
             return
-            
+			
         # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
         await bot.download_file(file_path, local_path)
@@ -1078,7 +1045,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
-		
+
 @dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки загрузки фото человека"""
@@ -1154,44 +1121,60 @@ async def show_balance_info(user: types.User):
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через DonationAlerts"""
     try:
-        username = user.username or f"id{user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
+        # Формируем сообщение для DonationAlerts (username и ID)
+        payment_message = f"Оплата за примерки от @{user.username} (ID: {user.id})"
+        encoded_message = quote(payment_message)
         
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-            "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f'<b><span style="color: #0000FF;">{payment_note}</span></b>\n\n'
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
-            "‼️Ничего не меняйте в сообщении‼️"
-        )
-        
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="💳 Оплатить", 
-                        callback_data="confirm_payment"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Мой баланс",
-                        callback_data="check_balance"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔙 Назад",
-                        callback_data="back_to_menu"
-                    )
-                ]
+        # Создаем клавиатуру с кнопкой оплаты и проверки баланса
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="💳 Пополнить баланс", 
+                    url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}?message={encoded_message}"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔄 Мой баланс",
+                    callback_data="check_balance"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🔙 Назад",
+                    callback_data="back_to_menu"
+                )
             ]
-        )
+        ])
         
+        payment_text = (
+            "🚫 У вас закончились бесплатные примерки.\n\n"
+            "❤️Спасибо, что воспользовались нашей Виртуальной примерочной!!!🥰\n"
+            "Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку.\n"
+            "Сумма символическая, но которая поможет Вам стать стильными, модными и красивыми\n"
+            "👗👔🩳👙👠👞👒👟🧢🧤👛👜\n\n"
+            "📌 <b>Для продолжения примерок необходимо пополнить баланс:</b>\n\n"
+            "💰 <b>Тарифы:</b>\n"
+            f"- 30 руб = 1 примерка\n"
+            f"- 60 руб = 2 примерки\n"
+            f"- 90 руб = 3 примерки\n"
+            "и так далее...\n\n"
+            "1️⃣ Нажмите на кнопку 'Пополнить баланс (‼️Обязательно указать имя, читйате ‼️ВНИМАНИЕ)'\n\n"
+            "2️⃣ В поле оплаты указываете любую сумму не менее 30 руб (сколько хотите примерок)\n\n"
+            "3️⃣ Выбираете удобный способ оплаты (Карта или СБП)\n\n"
+            "4️⃣ В поле <b>e-mail</b> - укажите любую почту, можете свою, можете придумать(не имеет значения)\n\n"
+            "💥<b>ВСЁ!!!</b>💥\n\n"
+            "⚠️‼️ <b>ВНИМАНИЕ!</b> При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+            "👇👇👇👇👇👇👇👇👇👇\n"
+            f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
+            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n"
+            "‼️<b>Ничего не меняйте в сообщении‼️</b>\n\n"
+            "❓Свой баланс Вы можете отслеживать по кнопке 'Мой баланс'"
+        )
         await bot.send_message(
             user.id,
-            warning_text,
+            payment_text,
             reply_markup=keyboard,
             parse_mode=ParseMode.HTML
         )
@@ -1201,8 +1184,8 @@ async def show_payment_options(user: types.User):
             try:
                 await bot.send_message(
                     ADMIN_CHAT_ID,
-                    f"💸 Пользователь @{username} ({user.id}) начал процесс оплаты\n"
-                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{username} (ID: {user.id})'"
+                    f"💸 Пользователь @{user.username} ({user.id}) начал процесс оплаты\n"
+                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{user.username} (ID: {user.id})'"
                 )
             except Exception as e:
                 logger.error(f"Error sending admin payment notification: {e}")
@@ -1271,10 +1254,10 @@ async def check_results():
                     photo = FSInputFile(result_file_local)
 
                     keyboard = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [InlineKeyboardButton(text="🔁 Продолжить примерку", callback_data="continue_tryon")]
-                        ]
-                    )
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Продолжить примерку", callback_data="continue_tryon")]
+    ]
+)
 
                     await bot.send_photo(
                         chat_id=user_id,
@@ -1314,6 +1297,12 @@ async def check_results():
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
 
+
+
+
+
+
+
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
@@ -1344,6 +1333,7 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         logger.error(f"Error in continue_tryon_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
+
 
 @dp.callback_query(F.data == "show_payment_options")
 async def show_payment_options_handler(callback_query: types.CallbackQuery):
