@@ -1211,7 +1211,16 @@ async def check_results():
 
                 user_row = await supabase_api.get_user_row(int(user_id))
                 if user_row and user_row.get("ready"):
-                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
+                result_check_path = f"{user_id}/result.jpg"
+                try:
+                    supabase.storage.from_(UPLOADS_BUCKET).download(result_check_path)
+                    if not user_row.get("result_sent"):
+                        logger.warning(f"⚠️ {user_id} помечен как ready, но результат не был отправлен — пробуем повторно")
+                    else:
+                        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
+                        continue
+                except Exception:
+                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файла уже нет")
                     continue
 
                 result_path = f"{user_id}/result.jpg"
@@ -1274,6 +1283,9 @@ async def check_results():
                 except Exception as e:
                     logger.error(f"❌ Не удалось удалить файлы пользователя {user_id}: {e}")
 
+                # Уведомление администратору
+                await notify_admin(f"📤 Отправлен результат для @{current_username} ({user_id})")
+
                 # Обновляем статус в базе
                 await supabase_api.upsert_row(user_id, current_username, {
                     "ready": True,
@@ -1287,6 +1299,7 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 
 
 @dp.callback_query(F.data == "continue_tryon")
