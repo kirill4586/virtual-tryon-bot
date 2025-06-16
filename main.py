@@ -56,7 +56,7 @@ UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "primery"
 UPLOADS_BUCKET = "uploads"  # Бакет для загружаемых файлов
-SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.tiff', '.svg'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 DONATION_ALERTS_TOKEN = os.getenv("DONATION_ALERTS_TOKEN", "").strip()
@@ -706,24 +706,11 @@ async def choose_model(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
         await callback_query.answer()
 
-        
-    except Exception as e:
-        logger.error(f"Error in choose_model: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке категорий. Попробуйте позже.")
-        await callback_query.answer()
-
 @dp.callback_query(F.data.startswith("models_"))
 async def show_category_models(callback_query: types.CallbackQuery):
     """Показывает модели выбранной категории"""
     start_time = time.time()
     try:
-        #if await is_processing(callback_query.from_user.id):
-            #try:
-                #await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
-            #except TelegramBadRequest:
-                #logger.warning("Callback query expired for processing check")
-            #return
-            
         data_parts = callback_query.data.split("_")
         if len(data_parts) != 3:
             await callback_query.answer("⚠️ Ошибка параметров", show_alert=True)
@@ -781,28 +768,26 @@ async def show_category_models(callback_query: types.CallbackQuery):
 
         if end_idx < len(models):
             await callback_query.message.answer(
-    "Показать еще модели?",
-    reply_markup=InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬇️ Показать ещё",
-                    callback_data=f"models_{category}_{page + 1}"
-                ),
-                InlineKeyboardButton(
-                    text="👤 Своё фото",
-                    callback_data="upload_person"
-                ),
-                InlineKeyboardButton(
-                    text="🔙 Назад к категориям",
-                    callback_data="choose_model"
+                "Показать еще модели?",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [
+                            InlineKeyboardButton(
+                                text="⬇️ Показать ещё",
+                                callback_data=f"models_{category}_{page + 1}"
+                            ),
+                            InlineKeyboardButton(
+                                text="👤 Своё фото",
+                                callback_data="upload_person"
+                            ),
+                            InlineKeyboardButton(
+                                text="🔙 Назад к категориям",
+                                callback_data="choose_model"
+                            )
+                        ]
+                    ]
                 )
-            ]
-        ]
-    )  # ← вот эта скобка завершает InlineKeyboardMarkup(...)
-)      # ← вот эта закрывает весь вызов .message.answer(...)
-
-
+            )
             await callback_query.answer()
         else:
             await callback_query.message.answer("✅ Это все доступные модели в данной категории.")
@@ -867,7 +852,6 @@ async def model_selected(callback_query: types.CallbackQuery):
         await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
         await callback_query.answer()
 
-
     except Exception as e:
         logger.error(f"❌ Ошибка при выборе модели: {e}")
         await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
@@ -877,7 +861,7 @@ async def show_no_tries_left_message(user: types.User):
     """Показывает сообщение о том, что бесплатные примерки закончились"""
     try:
         message_text = (
-             "🚫 У вас закончились бесплатные примерки.\n\n"
+            "🚫 У вас закончились бесплатные примерки.\n\n"
             "❤️Спасибо, что воспользовались нашей Виртуальной примерочной!!!🥰\n"
             "Первая примерка была демонстрационной, последующие примерки стоят 30 рублей за примерку.\n"
             "Сумма символическая, но которая поможет Вам стать стильными, модными и красивыми\n"
@@ -906,7 +890,7 @@ async def show_no_tries_left_message(user: types.User):
             inline_keyboard=[
                 [
                     InlineKeyboardButton(
-                        text="💳 Пополнить баланс", 
+                        text="💳 Оплатить", 
                         callback_data="confirm_payment"
                     )
                 ],
@@ -922,7 +906,8 @@ async def show_no_tries_left_message(user: types.User):
         await bot.send_message(
             user.id,
             message_text,
-            reply_markup=keyboard
+            reply_markup=keyboard,
+            parse_mode=ParseMode.HTML
         )
         
     except Exception as e:
@@ -951,7 +936,7 @@ async def confirm_payment_handler(callback_query: types.CallbackQuery):
         username = callback_query.from_user.username or f"id{user_id}"
         
         # Уведомление администратору
-        await notify_admin(f"💸 Клиент @{username} ({user_id}): Клиент оплачивает")
+        await notify_admin(f"💸 Клиент @{username} ({user_id}): Перешел к оплате")
         
         # Создаем ссылку для оплаты с сообщением
         payment_message = quote(f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}")
