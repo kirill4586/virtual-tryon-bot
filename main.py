@@ -811,95 +811,49 @@ async def show_category_models(callback_query: types.CallbackQuery):
 async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     user_id = callback_query.from_user.id
-    
+
     # Проверяем количество оставшихся примерок
     tries_left = await get_user_tries(user_id)
     if tries_left <= 0:
         await show_payment_options(callback_query.from_user)
         await callback_query.answer()
         return
-        
+
     if await is_processing(user_id):
         try:
             await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
         except TelegramBadRequest:
             logger.warning("Callback query expired for processing check")
         return
-        
+
+    # Выделяем путь модели и имя файла
     model_path = callback_query.data.replace("model_", "")
     category, model_name = model_path.split('/')
-    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
-    os.makedirs(user_dir, exist_ok=True)
-    
-    try:
-        await callback_query.message.delete()
-        
-        clothes_photo_exists = any(
-            f.startswith("photo_1") and f.endswith(tuple(SUPPORTED_EXTENSIONS))
-            for f in os.listdir(user_dir)
-        )
 
-        model_display_name = os.path.splitext(model_name)[0]
-        await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
-            "model_selected": model_path,
-            "status": "model_selected"
-        })
-        
-        if supabase:
-            try:
-                model_url = supabase.storage.from_(MODELS_BUCKET).get_public_url(f"{model_path}")
-                
-                model_path_local = os.path.join(user_dir, "selected_model.jpg")
-                with open(model_path_local, 'wb') as f:
-                    res = supabase.storage.from_(MODELS_BUCKET).download(f"{model_path}")
-                    f.write(res)
-                logger.info(f"Model {model_path} downloaded successfully")
-                
-                # Загружаем модель в Supabase в папку uploads
-                await upload_to_supabase(model_path_local, user_id, "models")
-                
-                if clothes_photo_exists:
-                    response_text = (
-                        f"✅ Модель {model_display_name} выбрана.\n\n"
-                        "✅ Оба файла получены.\n"
-                        "🔄 Идёт примерка. Ожидайте результат!"
-                    )
-                    await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
-                        "photo_person": True,
-                        "status": "В обработке",
-                        "photo1_received": True,
-                        "photo2_received": True,
-                        "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S")
-                    })
-                    
-                    await supabase_api.decrement_tries(user_id)
-                    
-                    await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
-                else:
-                    response_text = (
-                        f"✅ Модель {model_display_name} выбрана.\n\n"
-                        "📸 Теперь отправьте фото одежды."
-                    )
-                    await supabase_api.upsert_row(user_id, callback_query.from_user.username, {
-                        "photo1_received": False,
-                        "photo2_received": True
-                    })
-                
-                # Отправляем новое сообщение с фото модели в самый низ
-                await bot.send_photo(
-                    chat_id=user_id,
-                    photo=model_url,
-                    caption=response_text
-                )
-                await callback_query.answer()
-                
-            except Exception as e:
-                logger.error(f"Error downloading model: {e}")
-                await bot.send_message(
-                    user_id,
-                    "❌ Ошибка загрузки модели. Попробуйте выбрать другую."
-                )
-                await callback_query.answer()
+    # Загружаем файл модели из Supabase и сохраняем как photo_2.jpg
+    try:
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+        model_local_path = os.path.join(user_dir, "photo_2.jpg")
+
+        res = supabase.storage.from_(MODELS_BUCKET).download(f"{category}/{model_name}")
+        with open(model_local_path, 'wb') as f:
+            f.write(res)
+
+        logger.info(f"✅ Модель {model_name} загружена и сохранена как photo_2.jpg для пользователя {user_id}")
+
+        # Загружаем файл модели как photo_2 в Supabase
+        await upload_to_supabase(model_local_path, user_id, "photos")
+
+        await callback_query.message.answer("✅ Модель выбрана. 🔄 Идёт примерка. Ожидайте результат!")
+        await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
+        await callback_query.answer()
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка при выборе модели: {e}")
+        await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
+        await callback_query.answer()
+
                 return
             
     except Exception as e:
