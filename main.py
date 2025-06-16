@@ -881,10 +881,11 @@ async def model_selected(callback_query: types.CallbackQuery):
         await callback_query.message.answer("✅ Модель выбрана. 🔄 Идёт примерка. Ожидайте результат!")
         await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
         await callback_query.answer()
-except Exception as e:
-    logger.error(f"❌ Ошибка при выборе модели: {e}")
-    await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
-    await callback_query.answer()
+		
+   except Exception as e:
+        logger.error(f"❌ Ошибка при выборе модели: {e}")
+        await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
+        await callback_query.answer()
 
 
 @dp.callback_query(F.data == "pay_balance")
