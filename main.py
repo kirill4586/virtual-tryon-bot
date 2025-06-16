@@ -825,22 +825,7 @@ async def model_selected(callback_query: types.CallbackQuery):
     # Проверяем количество оставшихся примерок
     tries_left = await get_user_tries(user_id)
     if tries_left <= 0:
-        username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-            "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f"<code>{payment_note}</code>\n\n"
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
-            "‼️Ничего не меняйте в сообщении‼️"
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}")]]
-        )
-        await callback_query.message.answer(warning_text, reply_markup=keyboard)
-
-        await show_payment_options(callback_query.from_user)
+        await show_no_tries_left_message(callback_query.from_user)
         await callback_query.answer()
         return
 
@@ -888,24 +873,15 @@ async def model_selected(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "pay_balance")
-async def handle_pay_balance(callback_query: types.CallbackQuery):
-    """Обработчик кнопки пополнения баланса"""
+async def show_no_tries_left_message(user: types.User):
+    """Показывает сообщение о том, что бесплатные примерки закончились"""
     try:
-        username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-        
-        # Формируем сообщение с HTML-разметкой для жирного синего текста
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-            "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f'<b><span style="color: #0000FF;">{payment_note}</span></b>\n\n'
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
-            "‼️Ничего не меняйте в сообщении‼️"
+        message_text = (
+            "❤️ Спасибо, что воспользовались нашей Виртуальной примерочной! 🥰\n\n"
+            "Первая примерка была демонстрационной. Последующие примерки стоят 30 рублей за примерку.\n\n"
+            "Чтобы продолжить, пожалуйста, оплатите услугу."
         )
         
-        # Создаем клавиатуру с кнопкой оплаты
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[
                 [
@@ -913,17 +889,35 @@ async def handle_pay_balance(callback_query: types.CallbackQuery):
                         text="💳 Оплатить", 
                         callback_data="confirm_payment"
                     )
+                ],
+                [
+                    InlineKeyboardButton(
+                        text="🔄 Мой баланс",
+                        callback_data="check_balance"
+                    )
                 ]
             ]
         )
         
-        await callback_query.message.answer(
-            warning_text, 
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
+        await bot.send_message(
+            user.id,
+            message_text,
+            reply_markup=keyboard
         )
-        await callback_query.answer()
         
+    except Exception as e:
+        logger.error(f"Error showing no tries left message: {e}")
+        await bot.send_message(
+            user.id,
+            "❌ Ошибка при обработке запроса. Попробуйте позже."
+        )
+
+@dp.callback_query(F.data == "pay_balance")
+async def handle_pay_balance(callback_query: types.CallbackQuery):
+    """Обработчик кнопки пополнения баланса"""
+    try:
+        await show_no_tries_left_message(callback_query.from_user)
+        await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in handle_pay_balance: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
@@ -1030,6 +1024,12 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
                 ]
             ])
         elif "photo_2.jpg" not in existing:
+            # Проверяем количество оставшихся попыток
+            tries_left = await get_user_tries(user_id)
+            if tries_left <= 0:
+                await show_no_tries_left_message(user)
+                return
+
             photo_type = 2
             filename = f"photo_2{os.path.splitext(file_path)[1]}"
             caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
@@ -1102,12 +1102,6 @@ async def handle_photo(message: types.Message):
     os.makedirs(user_dir, exist_ok=True)
     
     try:
-        tries_left = await get_user_tries(user_id)
-        
-        if tries_left <= 0:
-            await show_payment_options(user)
-            return
-            
         await process_photo(message, user, user_dir)
         
     except Exception as e:
@@ -1149,69 +1143,6 @@ async def show_balance_info(user: types.User):
         await bot.send_message(
             user.id,
             "❌ Ошибка при получении информации о балансе. Попробуйте позже."
-        )
-
-async def show_payment_options(user: types.User):
-    """Показывает варианты оплаты через DonationAlerts"""
-    try:
-        username = user.username or f"id{user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-        
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-            "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f'<b><span style="color: #0000FF;">{payment_note}</span></b>\n\n'
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
-            "‼️Ничего не меняйте в сообщении‼️"
-        )
-        
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="💳 Оплатить", 
-                        callback_data="confirm_payment"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔄 Мой баланс",
-                        callback_data="check_balance"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        text="🔙 Назад",
-                        callback_data="back_to_menu"
-                    )
-                ]
-            ]
-        )
-        
-        await bot.send_message(
-            user.id,
-            warning_text,
-            reply_markup=keyboard,
-            parse_mode=ParseMode.HTML
-        )
-        
-        # Уведомление администратору о начале оплаты
-        if ADMIN_CHAT_ID:
-            try:
-                await bot.send_message(
-                    ADMIN_CHAT_ID,
-                    f"💸 Пользователь @{username} ({user.id}) начал процесс оплаты\n"
-                    f"ℹ️ Сообщение для DonationAlerts: 'Оплата за примерки от @{username} (ID: {user.id})'"
-                )
-            except Exception as e:
-                logger.error(f"Error sending admin payment notification: {e}")
-                
-    except Exception as e:
-        logger.error(f"Error sending payment options: {e}")
-        await bot.send_message(
-            user.id,
-            "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
 
 @dp.callback_query(F.data == "check_balance")
@@ -1342,17 +1273,6 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         await callback_query.answer()
     except Exception as e:
         logger.error(f"Error in continue_tryon_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
-        await callback_query.answer()
-
-@dp.callback_query(F.data == "show_payment_options")
-async def show_payment_options_handler(callback_query: types.CallbackQuery):
-    """Обработчик кнопки показа вариантов оплаты"""
-    try:
-        await show_payment_options(callback_query.from_user)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in show_payment_options_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
