@@ -782,17 +782,25 @@ async def show_category_models(callback_query: types.CallbackQuery):
         if end_idx < len(models):
             await callback_query.message.answer(
                 "Показать еще модели?",
-                reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [
-                            InlineKeyboardButton(
-                                text="⬇️ Показать еще",
-                                callback_data=f"models_{category}_{page + 1}"
-                            )
-                        ]
-                    ]
-                )
+                reply_markup = InlineKeyboardMarkup(
+    inline_keyboard=[
+        [
+            InlineKeyboardButton(
+                text="⬇️ Показать ещё",
+                callback_data=f"models_{category}_{page + 1}"
+            ),
+            InlineKeyboardButton(
+                text="👤 Своё фото",
+                callback_data="upload_person"
+            ),
+            InlineKeyboardButton(
+                text="🔙 Назад к категориям",
+                callback_data="choose_model"
             )
+        ]
+    ]
+)
+
             await callback_query.answer()
         else:
             await callback_query.message.answer("✅ Это все доступные модели в данной категории.")
