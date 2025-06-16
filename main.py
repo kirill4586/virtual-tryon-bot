@@ -717,7 +717,7 @@ async def show_category_models(callback_query: types.CallbackQuery):
     """Показывает модели выбранной категории"""
     start_time = time.time()
     try:
-        if await is_processing(callback_query.from_user.id):
+        #if await is_processing(callback_query.from_user.id):
             #try:
                 #await callback_query.answer("✅ Оба файла получены. Ожидайте результат!", show_alert=True)
             #except TelegramBadRequest:
