@@ -883,12 +883,6 @@ async def model_selected(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 
-except Exception as e:
-    logger.error(f"❌ Ошибка при выборе модели: {e}")
-    await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
-    await callback_query.answer()
-
-
 @dp.callback_query(F.data == "pay_balance")
 async def handle_pay_balance(callback_query: types.CallbackQuery):
     username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
