@@ -829,10 +829,19 @@ async def model_selected(callback_query: types.CallbackQuery):
         payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
         warning_text = (
             "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+
+
             "👇👇👇👇👇👇👇👇👇👇\n\n"
-            f"<code>{payment_note}</code>\n\n"
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс\n\n"
+
+
+            f"<code>{payment_note}</code>М\n\n"
+
+
+            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n\n"
+
+
+            "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n\n"
+
             "‼️Ничего не меняйте в сообщении‼️"
         )
         keyboard = InlineKeyboardMarkup(
@@ -883,17 +892,36 @@ async def model_selected(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 
+except Exception as e:
+    logger.error(f"❌ Ошибка при выборе модели: {e}")
+    await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
+    await callback_query.answer()
+
+except Exception as e:
+    logger.error(f"❌ Ошибка при выборе модели: {e}")
+    await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
+    await callback_query.answer()
+
+
 @dp.callback_query(F.data == "pay_balance")
 async def handle_pay_balance(callback_query: types.CallbackQuery):
     username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
     payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
 
     warning_text = (
-        "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:/n/n"
-        "👇👇👇👇👇👇👇👇👇👇/n/n"
-        f"<code>{payment_note}</code>/n/n"
-        "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений/n"
-        "🤷‍♂️Иначе не будет понятно кому начислять баланс/n"
+        "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:
+
+"
+        "👇👇👇👇👇👇👇👇👇👇
+
+"
+        f"<code>{payment_note}</code>
+
+"
+        "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений
+"
+        "🤷‍♂️Иначе не будет понятно кому начислять баланс.
+"
         "‼️Ничего не меняйте в сообщении‼️"
     )
 
