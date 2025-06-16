@@ -842,6 +842,14 @@ async def model_selected(callback_query: types.CallbackQuery):
 
         logger.info(f"✅ Модель {model_name} загружена и сохранена как photo_2.jpg для пользователя {user_id}")
 
+        # Показываем превью модели
+        model_preview = FSInputFile(model_local_path)
+        await bot.send_photo(
+            chat_id=user_id,
+            photo=model_preview,
+            caption="📸 Вы выбрали эту модель для примерки."
+        )
+
         # Загружаем файл модели как photo_2 в Supabase
         await upload_to_supabase(model_local_path, user_id, "photos")
 
@@ -856,6 +864,7 @@ async def model_selected(callback_query: types.CallbackQuery):
         logger.error(f"❌ Ошибка при выборе модели: {e}")
         await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
         await callback_query.answer()
+
 
 
 
