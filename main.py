@@ -899,9 +899,6 @@ async def model_selected(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 
-
-
-
 @dp.callback_query(F.data.startswith("view_examples_"))
 async def view_examples(callback_query: types.CallbackQuery):
     """Просмотр примеров работ"""
@@ -1232,25 +1229,10 @@ async def check_results():
                     photo = FSInputFile(result_file_local)
 
                     keyboard = InlineKeyboardMarkup(
-                        inline_keyboard=[
-                            [
-                                InlineKeyboardButton(
-                                    text="🔄 Продолжить примерку",
-                                    callback_data="continue_tryon"
-                                )
-                            ],
-                            [
-                                InlineKeyboardButton(
-                                    text="💳 Пополнить баланс",
-                                    callback_data="show_payment_options"
-                                ),
-                                InlineKeyboardButton(
-                                    text="💰 Мой баланс",
-                                    callback_data="check_balance"
-                                )
-                            ]
-                        ]
-                    )
+    inline_keyboard=[
+        [InlineKeyboardButton(text="🔁 Продолжить примерку", callback_data="continue_tryon")]
+    ]
+)
 
                     await bot.send_photo(
                         chat_id=user_id,
