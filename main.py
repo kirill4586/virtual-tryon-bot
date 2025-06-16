@@ -828,11 +828,11 @@ async def model_selected(callback_query: types.CallbackQuery):
         username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
         payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
         warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:/n/n"
-            "👇👇👇👇👇👇👇👇👇👇/n/n"
-            f"<code>{payment_note}</code>/n/n"
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений/n"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс/n"
+            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
+            "👇👇👇👇👇👇👇👇👇👇\n\n"
+            f"<code>{payment_note}</code>\n\n"
+            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n"
+            "🤷‍♂️Иначе не будет понятно кому начислять баланс\n\n"
             "‼️Ничего не меняйте в сообщении‼️"
         )
         keyboard = InlineKeyboardMarkup(
@@ -920,31 +920,6 @@ async def handle_pay_balance(callback_query: types.CallbackQuery):
         logger.error(f"❌ Ошибка при выборе модели: {e}")
         await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
         await callback_query.answer()
-
-
-@dp.callback_query(F.data == "pay_balance")
-async def handle_pay_balance(callback_query: types.CallbackQuery):
-    username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
-    payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-
-    warning_text = (
-        "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:\n\n"
-        "👇👇👇👇👇👇👇👇👇👇\n\n"
-        f"<code>{payment_note}</code>\n\n"
-        "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений\n"
-        "🤷‍♂️Иначе не будет понятно кому начислять баланс.\n"
-        "‼️Ничего не меняйте в сообщении‼️\n"
-    )
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}")],
-            [InlineKeyboardButton(text="📋 Скопировать сообщение", callback_data="copy_payment_note")]
-        ]
-    )
-
-    await callback_query.message.answer(warning_text, reply_markup=keyboard)
-    await callback_query.answer()
 
         # Очистка отключена — перенесена в check_results(), чтобы удаление происходило только после отправки результата
       
