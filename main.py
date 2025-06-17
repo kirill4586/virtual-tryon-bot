@@ -825,30 +825,6 @@ async def model_selected(callback_query: types.CallbackQuery):
     # Проверяем количество оставшихся примерок
     tries_left = await get_user_tries(user_id)
     if tries_left <= 0:
-        username = callback_query.from_user.username or f"id{callback_query.from_user.id}"
-        payment_note = f"ОПЛАТА ЗА ПРИМЕРКИ от @{username}"
-        warning_text = (
-            "⚠️‼️ ВНИМАНИЕ! При оплате в поле для сообщений, которое находится под оплатой обязательно укажите следующее:
-
-"
-            "👇👇👇👇👇👇👇👇👇👇
-
-"
-            f"<code>{payment_note}</code>
-
-"
-            "Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для сообщений
-
-"
-            "🤷‍♂️Иначе не будет понятно кому начислять баланс.
-"
-            "‼️Ничего не меняйте в сообщении‼️"
-        )
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="💳 Оплатить", url=f"https://www.donationalerts.com/r/{DONATION_ALERTS_USERNAME}")]]
-        )
-        await callback_query.message.answer(warning_text, reply_markup=keyboard)
-
         await show_payment_options(callback_query.from_user)
         await callback_query.answer()
         return
@@ -898,7 +874,6 @@ async def model_selected(callback_query: types.CallbackQuery):
         logger.error(f"❌ Ошибка при выборе модели: {e}")
         await callback_query.message.answer("⚠️ Не удалось загрузить модель. Попробуйте другую.")
         await callback_query.answer()
-
 
 
 
