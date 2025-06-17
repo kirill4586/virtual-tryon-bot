@@ -1192,8 +1192,13 @@ async def check_results():
                     continue
 
                 if user_row.get("result_sent"):
-                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
-                    continue
+    expected_file = "result.png" if has_png else "result.jpg"
+    if expected_file not in result_names:
+        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файл отсутствует")
+        continue
+    else:
+        logger.warning(f"⚠️ {user_id} помечен как отправленный, но файл {expected_file} всё ещё существует — пробуем повторно")
+
 
                 result_filename = "result.png" if has_png else "result.jpg"
                 result_path = f"{user_id}/{result_filename}"
