@@ -1299,6 +1299,18 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
 
         # Сбрасываем флаги и запускаем новый сценарий
         await supabase_api.reset_flags(user_id)
+		# Удаляем локальные файлы
+    try:
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        if os.path.exists(user_dir):
+            for filename in os.listdir(user_dir):
+                file_path = os.path.join(user_dir, filename)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
+            logger.info(f"🧹 Локальные файлы удалены для пользователя {user_id}")
+    except Exception as e:
+        logger.warning(f"⚠️ Не удалось удалить локальные файлы для {user_id}: {e}")
+
 
         await send_welcome(
             user_id,
