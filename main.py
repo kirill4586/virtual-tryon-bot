@@ -862,6 +862,15 @@ async def model_selected(callback_query: types.CallbackQuery):
 
         # Загружаем файл модели как photo_2 в Supabase
         await upload_to_supabase(model_local_path, user_id, "photos")
+        await supabase_api.upsert_row(user_id, callback_query.from_user.username or "", {
+            "photo1_received": True,
+            "photo2_received": True,
+            "status": "В обработке",
+            "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "username": callback_query.from_user.username or ""
+        })
+
+        await supabase_api.decrement_tries(user_id)
 
         await callback_query.message.answer("✅ Модель выбрана. 🔄 Идёт примерка. Ожидайте результат!")
         await notify_admin(f"📸 Все фото получены от @{callback_query.from_user.username} ({user_id})")
