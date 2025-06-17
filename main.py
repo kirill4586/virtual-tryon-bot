@@ -1163,7 +1163,7 @@ async def check_balance_handler(callback_query: types.CallbackQuery):
         await callback_query.answer()
 
 async def check_results():
-    """Отслеживает загрузку result.png или result.jpg и отправляет его нужному клиенту"""
+    """Отслеживает загрузку result.jpg и отправляет его нужному клиенту"""
     logger.info("🔄 Starting check_results() loop...")
     while True:
         try:
@@ -1176,57 +1176,58 @@ async def check_results():
                 os.makedirs(user_dir, exist_ok=True)
 
                 user_row = await supabase_api.get_user_row(int(user_id))
-                if not user_row:
-                    continue
+                if user_row and user_row.get("ready"):
+                    result_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}")
+                    result_names = [f["name"] for f in result_files]
 
-                # Получаем список файлов
-                result_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}")
-                result_names = [f["name"] for f in result_files]
-                logger.info(f"📦 Файлы пользователя {user_id}: {result_names}")
+                    if "result.jpg" in result_names and not user_row.get("result_sent"):
+                        logger.warning(f"⚠️ {user_id} помечен как ready, но результат не был отправлен — пробуем повторно")
+                    elif "result.jpg" not in result_names:
+                        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файла уже нет")
+                        continue
+                    else:
+                        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен")
+                        continue
 
-                has_png = "result.png" in result_names
-                has_jpg = "result.jpg" in result_names
+                result_path = f"{user_id}/result.jpg"
+                result_file_local = os.path.join(user_dir, "result.jpg")
 
-                if not has_png and not has_jpg:
-                    logger.info(f"⏩ Пропускаем пользователя {user_id} — результат не найден")
-                    continue
-
-                if user_row.get("result_sent"):
-    expected_file = "result.png" if has_png else "result.jpg"
-    if expected_file not in result_names:
-        logger.info(f"⏩ Пропускаем пользователя {user_id} — результат уже отправлен и файл отсутствует")
-        continue
-    else:
-        logger.warning(f"⚠️ {user_id} помечен как отправленный, но файл {expected_file} всё ещё существует — пробуем повторно")
-
-
-                result_filename = "result.png" if has_png else "result.jpg"
-                result_path = f"{user_id}/{result_filename}"
-                result_file_local = os.path.join(user_dir, result_filename)
-
-                # Скачиваем файл
                 try:
                     res = supabase.storage.from_(UPLOADS_BUCKET).download(result_path)
                     with open(result_file_local, 'wb') as f:
                         f.write(res)
-                    logger.info(f"✅ Загружен {result_filename} для {user_id}")
+                    logger.info(f"✅ Загружен result.jpg для {user_id}")
                 except Exception as e:
-                    logger.warning(f"⚠️ {result_filename} ещё не загружен для {user_id}: {e}")
+                    logger.warning(f"⚠️ result.jpg ещё не загружен для {user_id}: {e}")
                     continue
 
-                # Отправляем результат
                 current_username = user_row.get("username", "") if user_row else ""
+
+                # Отправляем фото клиенту
                 try:
                     photo = FSInputFile(result_file_local)
+
                     keyboard = InlineKeyboardMarkup(
                         inline_keyboard=[
-                            [InlineKeyboardButton(text="🔄 Продолжить примерку", callback_data="continue_tryon")],
                             [
-                                InlineKeyboardButton(text="💳 Пополнить баланс", callback_data="show_payment_options"),
-                                InlineKeyboardButton(text="💰 Мой баланс", callback_data="check_balance")
+                                InlineKeyboardButton(
+                                    text="🔄 Продолжить примерку",
+                                    callback_data="continue_tryon"
+                                )
+                            ],
+                            [
+                                InlineKeyboardButton(
+                                    text="💳 Пополнить баланс",
+                                    callback_data="show_payment_options"
+                                ),
+                                InlineKeyboardButton(
+                                    text="💰 Мой баланс",
+                                    callback_data="check_balance"
+                                )
                             ]
                         ]
                     )
+
                     await bot.send_photo(
                         chat_id=user_id,
                         photo=photo,
@@ -1237,7 +1238,7 @@ async def check_results():
                     logger.error(f"❌ Ошибка отправки результата для {user_id}: {send_error}")
                     continue
 
-                # Удаление всех форматов
+                # Удаляем все связанные файлы из Supabase
                 try:
                     supabase.storage.from_(UPLOADS_BUCKET).remove([
                         f"{user_id}/result.jpg",
@@ -1251,8 +1252,10 @@ async def check_results():
                 except Exception as e:
                     logger.error(f"❌ Не удалось удалить файлы пользователя {user_id}: {e}")
 
-                # Обновляем статус
+                # Уведомление администратору
                 await notify_admin(f"📤 Отправлен результат для @{current_username} ({user_id})")
+
+                # Обновляем статус в базе
                 await supabase_api.upsert_row(user_id, current_username, {
                     "ready": True,
                     "status": "Результат отправлен",
@@ -1265,6 +1268,12 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
+
+
+
+
+
 
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
