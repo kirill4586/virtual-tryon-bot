@@ -488,7 +488,7 @@ async def send_initial_examples(chat_id: int):
         await bot.send_message(chat_id, "📸 Примеры работ временно недоступны")
 
 async def get_examples_list():
-    """Получает список примеров из папки primery в Supabase"""
+    """Получает список примеров из папки primery в Supabase и сортирует их по имени"""
     if not supabase:
         logger.warning("Supabase client not available")
         return []
@@ -506,6 +506,9 @@ async def get_examples_list():
             if any(file['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS)
         ]
         
+        # Сортируем файлы по имени, чтобы порядок был последовательным
+        examples.sort()
+        
         logger.info(f"Found {len(examples)} examples")
         return examples
         
@@ -514,7 +517,7 @@ async def get_examples_list():
         return []
 
 async def send_examples_page(chat_id: int, page: int = 0):
-    """Отправляет страницу с примерами"""
+    """Отправляет страницу с примерами в строгом порядке"""
     try:
         examples = await get_examples_list()
         if not examples:
@@ -539,6 +542,7 @@ async def send_examples_page(chat_id: int, page: int = 0):
                 continue
         
         if media:
+            # Отправляем медиагруппу
             await bot.send_media_group(chat_id, media=media)
             
             # Создаем клавиатуру для навигации
@@ -557,14 +561,14 @@ async def send_examples_page(chat_id: int, page: int = 0):
             
             await bot.send_message(
                 chat_id,
-                "Выберите действие:",
+                f"Примеры {start_idx + 1}-{min(end_idx, len(examples))} из {len(examples)}. Выберите действие:",
                 reply_markup=keyboard
             )
             
     except Exception as e:
         logger.error(f"Error sending examples: {e}")
         await bot.send_message(chat_id, "❌ Ошибка при загрузке примеров. Попробуйте позже.")
-
+		
 async def get_models_list(category: str):
     """Получает список моделей для указанной категории с кешированием"""
     if not supabase:
