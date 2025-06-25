@@ -477,9 +477,9 @@ async def send_initial_examples(chat_id: int):
     """Отправляет первые три примера перед приветствием"""
     try:
         media = [
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1013DE2SDg8u0V69ePxTYki2WWSNaGWVi"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1010hYD1PjCQX-hZQAfRPigkLyz1PAaCH"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=104v4mW-4-HIH40RIg9-L86sTPWQsxCEF")
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1I2Wmi70R3ShIu3QMkp1AzHcrTWuNfLvY"),
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1tfBFKnGNRiQXpGlPO4o0fS3M4Ye8LQ76"),
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1wVJlEA7fd3L1O7a-byUSt5wiQ31kIW4-")
         ]
         await bot.send_media_group(chat_id, media=media)
         logger.info(f"Примеры фото отправлены {chat_id}")
