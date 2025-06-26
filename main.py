@@ -1082,6 +1082,12 @@ async def show_payment_options(user: types.User):
                     text="📱 Оплатить СБП", 
                     callback_data="pay_sbp"
                 )
+			],
+            [
+                InlineKeyboardButton(
+                    text="💳 Оплатить по QR", 
+                    callback_data="pay_qr"
+                )	
             ],
             [
                 InlineKeyboardButton(
@@ -1150,6 +1156,33 @@ async def show_payment_options(user: types.User):
             user.id,
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
+from aiogram.types import FSInputFile
+
+@dp.callback_query(F.data == "pay_qr")
+async def pay_qr_handler(callback_query: types.CallbackQuery):
+    user = callback_query.from_user
+    qr_image = "https://supabase.com/dashboard/project/jikkylblsmeuhbsewbkz/storage/buckets/qr/yoomoney_qr.png"  # путь к сохранённому QR-коду
+
+    caption = (
+        "📲 <b>Как оплатить по QR-коду:</b>\n\n"
+        "1️⃣ Откройте приложение вашего банка\n"
+        "2️⃣ Перейдите в раздел «СБП» или «Сканировать QR»\n"
+        "3️⃣ Отсканируйте этот код\n\n"
+        "💰 Введите сумму (например, 30 ₽)\n"
+        f"💬 В комментарий вставьте:\n"
+        f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username or 'username'}</code>\n\n"
+        "📌 <b>Если вы открыли бот на телефоне:</b>\n"
+        "Нажмите на изображение и сохраните его, чтобы открыть на другом устройстве и отсканировать."
+    )
+
+    await bot.send_photo(
+        chat_id=callback_query.from_user.id,
+        photo=qr_image,
+        caption=caption,
+        parse_mode=ParseMode.HTML
+    )
+
+    await callback_query.answer()
 
 @dp.callback_query(F.data == "payment_confirmation")
 async def payment_confirmation_handler(callback_query: types.CallbackQuery):
