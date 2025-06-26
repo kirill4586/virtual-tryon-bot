@@ -1588,3 +1588,11 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+		@dp.message()
+async def fallback_handler(message: types.Message, state: FSMContext):
+    current = await state.get_state()
+    if current:
+        return  # FSM активно — не перехватываем сообщение
+
+    # Здесь может быть логика главного меню или дефолтное поведение
+    await message.answer("👋 Выберите действие из меню ниже.")
