@@ -9,6 +9,8 @@ from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
+from states import PaymentFSM
+from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
     InlineKeyboardMarkup,
