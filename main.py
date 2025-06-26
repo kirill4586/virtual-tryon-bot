@@ -1073,7 +1073,7 @@ async def show_payment_options(user: types.User):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="💳 Оплатить картой", 
+                    text="💳 Оплатить картой (минималка 60 рублей)", 
                     url=YOO_MONEY_CARD_LINK
                 )
             ],
