@@ -97,7 +97,6 @@ bot = Bot(
 dp = Dispatcher(storage=MemoryStorage())
 dp.update.middleware(CallbackTimeoutMiddleware())
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-)
 
 # Кеш для списка моделей
 models_cache = {
