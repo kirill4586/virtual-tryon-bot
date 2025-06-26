@@ -64,7 +64,7 @@ PORT = int(os.getenv("PORT", 4000))
 # Настройки ЮMoney
 YOO_MONEY_WALLET = "4100118533855458"  # Номер кошелька ЮMoney
 YOO_MONEY_PHONE = "77055412709"  # Номер телефона для СБП
-YOO_MONEY_CARD_LINK = "https://donate.stream/yoomoney4100118533855458"
+YOO_MONEY_CARD_LINK = "https://donate.stream/yoomoney4100118533855458?nickname=@{user.username}"
 YOO_MONEY_SBP_LINK = "https://yoomoney.ru/prepaid?w=sbpme2me"
 
 # Названия полей в Supabase
