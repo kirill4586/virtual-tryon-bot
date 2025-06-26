@@ -1443,3 +1443,46 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+
+
+# === ОБРАБОТКА ПОДТВЕРЖДЕНИЯ ОПЛАТЫ ===
+
+@dp.callback_query(F.data == "confirm_payment")
+async def handle_payment_confirmation(callback_query: types.CallbackQuery):
+    await callback_query.message.answer(
+        "📩 Пожалуйста, укажите одно из следующего в ответ на это сообщение:\n\n"
+        "• ФИО, с которого был выполнен перевод\n"
+        "• Или прикрепите скриншот оплаты\n\n"
+        "После этого мы проверим платёж и откроем доступ."
+    )
+    await callback_query.answer()
+
+    if ADMIN_CHAT_ID:
+        await bot.send_message(
+            ADMIN_CHAT_ID,
+            f"📥 Пользователь @{callback_query.from_user.username} ({callback_query.from_user.id}) нажал \"Я оплатил\".\n"
+            f"Ожидается подтверждение."
+        )
+
+@dp.message_handler(lambda message: message.text and message.reply_to_message and "ФИО" in message.reply_to_message.text)
+async def handle_payment_fio(message: types.Message):
+    fio = message.text
+    await message.reply("✅ Спасибо! Ожидайте подтверждения.")
+
+    if ADMIN_CHAT_ID:
+        await bot.send_message(
+            ADMIN_CHAT_ID,
+            f"📄 ФИО от @{message.from_user.username} ({message.from_user.id}):\n<code>{fio}</code>",
+            parse_mode="HTML"
+        )
+
+@dp.message_handler(content_types=types.ContentType.PHOTO)
+async def handle_payment_screenshot(message: types.Message):
+    await message.reply("✅ Скриншот получен. Ожидайте проверки.")
+
+    if ADMIN_CHAT_ID:
+        await bot.send_message(
+            ADMIN_CHAT_ID,
+            f"🖼 Скриншот от @{message.from_user.username} ({message.from_user.id})"
+        )
+        await bot.send_photo(ADMIN_CHAT_ID, message.photo[-1].file_id)
