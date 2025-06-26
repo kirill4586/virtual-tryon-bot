@@ -64,8 +64,8 @@ PORT = int(os.getenv("PORT", 4000))
 # Настройки ЮMoney
 YOO_MONEY_WALLET = "4100118533855458"  # Номер кошелька ЮMoney
 YOO_MONEY_PHONE = "77055412709"  # Номер телефона для СБП
-YOO_MONEY_CARD_LINK = f"https://yoomoney.ru/to/{YOO_MONEY_WALLET}"
-YOO_MONEY_SBP_LINK = f"https://yoomoney.ru/transfer/quickpay?requestNumber={YOO_MONEY_PHONE}"
+YOO_MONEY_CARD_LINK = "https://donate.stream/yoomoney4100118533855458"
+YOO_MONEY_SBP_LINK = "https://yoomoney.ru/prepaid?w=sbpme2me"
 
 # Названия полей в Supabase
 USERS_TABLE = "users"
@@ -1085,6 +1085,12 @@ async def show_payment_options(user: types.User):
             ],
             [
                 InlineKeyboardButton(
+                    text="✅ Я Оплатил(а)",
+                    callback_data="payment_confirmation"
+                )
+            ],
+            [
+                InlineKeyboardButton(
                     text="🔄 Мой баланс",
                     callback_data="check_balance"
                 )
@@ -1144,6 +1150,46 @@ async def show_payment_options(user: types.User):
             user.id,
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
+
+@dp.callback_query(F.data == "payment_confirmation")
+async def payment_confirmation_handler(callback_query: types.CallbackQuery):
+    """Обработчик подтверждения оплаты"""
+    try:
+        await bot.send_message(
+            callback_query.from_user.id,
+            "📝 Пожалуйста, введите ваше ФИО для подтверждения оплаты:"
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in payment_confirmation_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.message(F.text & ~F.text.startswith('/'))
+async def handle_fio(message: types.Message):
+    """Обработчик ввода ФИО после подтверждения оплаты"""
+    try:
+        user = message.from_user
+        fio = message.text
+        
+        # Отправляем уведомление администратору
+        if ADMIN_CHAT_ID:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                f"💰 Подтверждение оплаты\n\n"
+                f"👤 Пользователь: @{user.username} ({user.id})\n"
+                f"📛 ФИО: {fio}\n"
+                f"🆔 ID: {user.id}\n"
+                f"👤 Имя в Telegram: {user.full_name}"
+            )
+        
+        await bot.send_message(
+            message.chat.id,
+            "✅ Ваши данные получены. Администратор проверит оплату и начислит баланс в ближайшее время."
+        )
+    except Exception as e:
+        logger.error(f"Error handling FIO: {e}")
+        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
 
 @dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
@@ -1443,46 +1489,3 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-
-
-# === ОБРАБОТКА ПОДТВЕРЖДЕНИЯ ОПЛАТЫ ===
-
-@dp.callback_query(F.data == "confirm_payment")
-async def handle_payment_confirmation(callback_query: types.CallbackQuery):
-    await callback_query.message.answer(
-        "📩 Пожалуйста, укажите одно из следующего в ответ на это сообщение:\n\n"
-        "• ФИО, с которого был выполнен перевод\n"
-        "• Или прикрепите скриншот оплаты\n\n"
-        "После этого мы проверим платёж и откроем доступ."
-    )
-    await callback_query.answer()
-
-    if ADMIN_CHAT_ID:
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            f"📥 Пользователь @{callback_query.from_user.username} ({callback_query.from_user.id}) нажал \"Я оплатил\".\n"
-            f"Ожидается подтверждение."
-        )
-
-@dp.message_handler(lambda message: message.text and message.reply_to_message and "ФИО" in message.reply_to_message.text)
-async def handle_payment_fio(message: types.Message):
-    fio = message.text
-    await message.reply("✅ Спасибо! Ожидайте подтверждения.")
-
-    if ADMIN_CHAT_ID:
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            f"📄 ФИО от @{message.from_user.username} ({message.from_user.id}):\n<code>{fio}</code>",
-            parse_mode="HTML"
-        )
-
-@dp.message_handler(content_types=types.ContentType.PHOTO)
-async def handle_payment_screenshot(message: types.Message):
-    await message.reply("✅ Скриншот получен. Ожидайте проверки.")
-
-    if ADMIN_CHAT_ID:
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            f"🖼 Скриншот от @{message.from_user.username} ({message.from_user.id})"
-        )
-        await bot.send_photo(ADMIN_CHAT_ID, message.photo[-1].file_id)
