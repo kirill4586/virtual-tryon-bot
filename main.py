@@ -993,6 +993,34 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
+@dp.callback_query(F.data == "payment_confirmation")
+async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
+    await callback_query.message.answer("📝 Пожалуйста, введите ваше <b>ФИО</b> для подтверждения оплаты:", parse_mode="HTML")
+    await state.set_state(PaymentFSM.waiting_for_fio)
+    await callback_query.answer()
+@dp.message(PaymentFSM.waiting_for_fio)
+async def process_fio_input(message: types.Message, state: FSMContext):
+    fio = message.text.strip()
+    user = message.from_user
+
+    # Отправить админу уведомление
+    if ADMIN_CHAT_ID:
+        await bot.send_message(
+            ADMIN_CHAT_ID,
+            f"💰 Подтверждение оплаты\n\n"
+            f"👤 Пользователь: @{user.username or 'без username'} ({user.id})\n"
+            f"📛 ФИО: {fio}\n"
+            f"📬 Имя в Telegram: {user.full_name}"
+        )
+
+    # Поблагодарить пользователя
+    await message.answer(
+        "✅ Спасибо! Ваше ФИО получено.\n"
+        "Администратор проверит платёж и откроет доступ в ближайшее время."
+    )
+
+    await state.clear()
+
 
 @dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
