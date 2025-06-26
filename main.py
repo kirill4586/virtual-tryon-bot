@@ -886,18 +886,6 @@ async def view_examples(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data.startswith("view_examples_"))
-async def view_examples(callback_query: types.CallbackQuery):
-    """Просмотр примеров работ"""
-    try:
-        page = int(callback_query.data.split("_")[-1])
-        await send_examples_page(callback_query.from_user.id, page)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in view_examples: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
-        await callback_query.answer()
-
 @dp.callback_query(F.data == "back_to_menu")
 async def back_to_menu(callback_query: types.CallbackQuery):
     """Возврат в главное меню"""
@@ -913,64 +901,170 @@ async def back_to_menu(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при возврате в меню. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.callback_query(F.data == "confirm_payment")
-async def handle_payment_confirmation(callback_query: types.CallbackQuery):
-    """Обработчик кнопки 'Я оплатил'"""
+@dp.callback_query(F.data.startswith("more_examples_"))
+async def more_examples(callback_query: types.CallbackQuery):
+    """Загрузка дополнительных примеров"""
     try:
-        await callback_query.message.answer(
-            "📩 Пожалуйста, укажите одно из следующего в ответ на это сообщение:\n\n"
-            "• ФИО, с которого был выполнен перевод\n"
-            "• Или прикрепите скриншот оплаты\n\n"
-            "После этого мы проверим платёж и откроем доступ."
-        )
+        page = int(callback_query.data.split("_")[-1])
+        await send_examples_page(callback_query.from_user.id, page)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in more_examples: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при загрузке примеров. Попробуйте позже.")
         await callback_query.answer()
 
-        # Уведомление администратору
-        if ADMIN_CHAT_ID:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                f"📥 Пользователь @{callback_query.from_user.username} ({callback_query.from_user.id}) нажал \"Я оплатил\".\n"
-                f"Ожидается подтверждение."
-            )
+async def process_photo(message: types.Message, user: types.User, user_dir: str):
+    """Обработка и сохранение фотографии"""
+    try:
+        user_id = user.id
+        user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+        os.makedirs(user_dir, exist_ok=True)
+
+        # Получаем файл фотографии
+        photo = message.photo[-1]  # Берем фото наибольшего размера
+        file_id = photo.file_id
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+
+        # Проверяем Supabase напрямую
+        try:
+            supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
+            existing = [f['name'] for f in supabase_files]
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка чтения файлов из Supabase для {user_id}: {e}")
+            existing = []
+
+        if "photo_1.jpg" not in existing:
+            photo_type = 1
+            filename = f"photo_1{os.path.splitext(file_path)[1]}"
+            caption = "✅ Фото одежды получено! Теперь отправьте фото на кого будем примерять 👩‍⚖️👨‍⚕"
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="👤 Своё фото", callback_data="upload_person"),
+                    InlineKeyboardButton(text="👫 Выбрать модель", callback_data="choose_model")
+                ]
+            ])
+        elif "photo_2.jpg" not in existing:
+            photo_type = 2
+            filename = f"photo_2{os.path.splitext(file_path)[1]}"
+            caption = "✅ Оба файла получены.\n🔄 Идёт примерка. Ожидайте результат!"
+            keyboard = None
+            await notify_admin(f"📸 Все фото получены от @{user.username} ({user_id})")
+        else:
+            await message.answer("❗ Вы уже загрузили оба фото. Ожидайте результат.")
+            return
+            
+        # Сохраняем фото локально
+        local_path = os.path.join(user_dir, filename)
+        await bot.download_file(file_path, local_path)
+
+        # Загружаем фото в Supabase
+        await upload_to_supabase(local_path, user_id, "photos")
+
+        # Получаем текущие данные пользователя, чтобы сохранить username
+        user_row = await supabase_api.get_user_row(user_id)
+        current_username = user_row.get('username', '') if user_row else (user.username or '')
+
+        # Обновляем статус в базе данных, сохраняя username
+        if photo_type == 1:
+            await supabase_api.upsert_row(user_id, current_username, {
+                "photo1_received": True,
+                "photo2_received": False,
+                "status": "Ожидается фото человека",
+                "username": current_username  # Явно сохраняем username
+            })
+        else:
+            await supabase_api.upsert_row(user_id, current_username, {
+                "photo1_received": True,
+                "photo2_received": True,
+                "status": "В обработке",
+                "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "username": current_username  # Явно сохраняем username
+            })
+
+            await supabase_api.decrement_tries(user_id)
+
+        if keyboard:
+            await message.answer(caption, reply_markup=keyboard)
+        else:
+            await message.answer(caption)
+
     except Exception as e:
-        logger.error(f"Error in payment confirmation handler: {e}")
+        logger.error(f"Error processing photo: {e}")
+        await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
+        raise
+
+@dp.callback_query(F.data == "upload_person")
+async def upload_person_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки загрузки фото человека"""
+    try:
+        await callback_query.message.answer(
+            "<b>👤Нажмите на Скрепку📎, рядом с сообщением и загрузите фото Человека для примерки</b>\n"
+            "👇     👇     👇     👇    👇     👇"       
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in upload_person_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.message(F.text & F.reply_to_message & 
-           F.reply_to_message.text.contains("укажите одно из следующего"))
-async def handle_payment_fio(message: types.Message):
-    """Обработчик текста (ФИО) после нажатия 'Я оплатил'"""
+@dp.message(F.photo)
+async def handle_photo(message: types.Message):
+    """Обработчик фотографий"""
+    user = message.from_user
+    user_id = user.id
+    user_dir = os.path.join(UPLOAD_DIR, str(user_id))
+    os.makedirs(user_dir, exist_ok=True)
+    
     try:
-        fio = message.text
-        await message.reply("✅ Спасибо, ожидайте подтверждения. Мы проверим платёж.")
-
-        if ADMIN_CHAT_ID:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                f"📄 ФИО от @{message.from_user.username} ({message.from_user.id}):\n<code>{fio}</code>",
-                parse_mode="HTML"
-            )
+        tries_left = await get_user_tries(user_id)
+        
+        if tries_left <= 0:
+            await show_payment_options(user)
+            return
+            
+        await process_photo(message, user, user_dir)
+        
     except Exception as e:
-        logger.error(f"Error handling payment FIO: {e}")
-        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
+        logger.error(f"Error handling photo: {e}")
+        await message.answer("❌ Ошибка при сохранении файла. Попробуйте ещё раз.")
 
-@dp.message(F.photo & F.reply_to_message & 
-           F.reply_to_message.text.contains("укажите одно из следующего"))
-async def handle_payment_screenshot(message: types.Message):
-    """Обработчик скриншота оплаты"""
+async def show_balance_info(user: types.User):
+    """Показывает информацию о балансе пользователя"""
     try:
-        await message.reply("✅ Спасибо, скриншот получен. Ожидайте подтверждение.")
-
-        if ADMIN_CHAT_ID:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                f"🖼 Скриншот от @{message.from_user.username} ({message.from_user.id})"
-            )
-            await bot.send_photo(ADMIN_CHAT_ID, message.photo[-1].file_id)
+        # Получаем данные пользователя из Supabase
+        user_row = await supabase_api.get_user_row(user.id)
+        
+        if not user_row:
+            await bot.send_message(user.id, "❌ Ваши данные не найдены. Пожалуйста, начните с команды /start")
+            return
+            
+        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
+        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row.get(TRIES_FIELD) else 0
+        status = user_row.get(STATUS_FIELD, "Неизвестно")
+        free_tries_used = bool(user_row.get(FREE_TRIES_FIELD, False))
+        
+        message_text = (
+            "💰 <b>Мой баланс:</b>\n\n"
+            f"💳 Сумма на счету: <b>{payment_amount} руб.</b>\n"
+            f"🎁 Доступно примерок: <b>{tries_left}</b>\n"
+            f"📊 Статус: <b>{status}</b>\n"
+            f"🆓 Бесплатная проверка: <b>{'использована' if free_tries_used else 'доступна'}</b>\n\n"
+            f"ℹ️ Стоимость одной примерки: <b>{PRICE_PER_TRY} руб.</b>"
+        )
+        
+        await bot.send_message(
+            user.id,
+            message_text,
+            parse_mode=ParseMode.HTML
+        )
+        
     except Exception as e:
-        logger.error(f"Error handling payment screenshot: {e}")
-        await message.answer("❌ Ошибка при обработке скриншота. Попробуйте позже.")
+        logger.error(f"Error showing balance info: {e}")
+        await bot.send_message(
+            user.id,
+            "❌ Ошибка при получении информации о балансе. Попробуйте позже."
+        )
 
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через ЮMoney"""
@@ -992,7 +1086,7 @@ async def show_payment_options(user: types.User):
             [
                 InlineKeyboardButton(
                     text="✅ Я Оплатил(а)",
-                    callback_data="confirm_payment"
+                    callback_data="payment_confirmation"
                 )
             ],
             [
@@ -1057,38 +1151,52 @@ async def show_payment_options(user: types.User):
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
 
+@dp.callback_query(F.data == "payment_confirmation")
+async def payment_confirmation_handler(callback_query: types.CallbackQuery):
+    """Обработчик подтверждения оплаты"""
+    try:
+        await bot.send_message(
+            callback_query.from_user.id,
+            "📝 Пожалуйста, введите ваше ФИО для подтверждения оплаты:"
+        )
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in payment_confirmation_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
+@dp.message(F.text & ~F.text.startswith('/'))
+async def handle_fio(message: types.Message):
+    """Обработчик ввода ФИО после подтверждения оплаты"""
+    try:
+        user = message.from_user
+        fio = message.text
+        
+        # Отправляем уведомление администратору
+        if ADMIN_CHAT_ID:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                f"💰 Подтверждение оплаты\n\n"
+                f"👤 Пользователь: @{user.username} ({user.id})\n"
+                f"📛 ФИО: {fio}\n"
+                f"🆔 ID: {user.id}\n"
+                f"👤 Имя в Telegram: {user.full_name}"
+            )
+        
+        await bot.send_message(
+            message.chat.id,
+            "✅ Ваши данные получены. Администратор проверит оплату и начислит баланс в ближайшее время."
+        )
+    except Exception as e:
+        logger.error(f"Error handling FIO: {e}")
+        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
+
 @dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки проверки баланса"""
     try:
-        # Получаем данные пользователя из Supabase
-        user_row = await supabase_api.get_user_row(callback_query.from_user.id)
-        
-        if not user_row:
-            await callback_query.message.answer("❌ Ваши данные не найдены. Пожалуйста, начните с команды /start")
-            await callback_query.answer()
-            return
-            
-        payment_amount = float(user_row.get(AMOUNT_FIELD, 0)) if user_row.get(AMOUNT_FIELD) else 0.0
-        tries_left = int(user_row.get(TRIES_FIELD, 0)) if user_row.get(TRIES_FIELD) else 0
-        status = user_row.get(STATUS_FIELD, "Неизвестно")
-        free_tries_used = bool(user_row.get(FREE_TRIES_FIELD, False))
-        
-        message_text = (
-            "💰 <b>Мой баланс:</b>\n\n"
-            f"💳 Сумма на счету: <b>{payment_amount} руб.</b>\n"
-            f"🎁 Доступно примерок: <b>{tries_left}</b>\n"
-            f"📊 Статус: <b>{status}</b>\n"
-            f"🆓 Бесплатная проверка: <b>{'использована' if free_tries_used else 'доступна'}</b>\n\n"
-            f"ℹ️ Стоимость одной примерки: <b>{PRICE_PER_TRY} руб.</b>"
-        )
-        
-        await callback_query.message.answer(
-            message_text,
-            parse_mode=ParseMode.HTML
-        )
+        await show_balance_info(callback_query.from_user)
         await callback_query.answer()
-        
     except Exception as e:
         logger.error(f"Error in check_balance_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при проверке баланса. Попробуйте позже.")
