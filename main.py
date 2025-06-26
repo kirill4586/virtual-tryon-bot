@@ -1161,7 +1161,7 @@ from aiogram.types import FSInputFile
 @dp.callback_query(F.data == "pay_qr")
 async def pay_qr_handler(callback_query: types.CallbackQuery):
     user = callback_query.from_user
-    qr_image = "https://supabase.com/dashboard/project/jikkylblsmeuhbsewbkz/storage/buckets/qr/yoomoney_qr.png"  # путь к сохранённому QR-коду
+    qr_image = "https://jikkylblsmeuhbsewbkz.supabase.co/storage/v1/object/public/qr/yoomoney_qr.png"  # путь к сохранённому QR-коду
 
     caption = (
         "📲 <b>Как оплатить по QR-коду:</b>\n\n"
