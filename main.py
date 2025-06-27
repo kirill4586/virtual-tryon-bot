@@ -24,6 +24,11 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 from aiohttp import web
 from supabase.lib.client_options import ClientOptions
+from aiogram.fsm.state import StatesGroup, State
+
+class PaymentFSM(StatesGroup):
+    waiting_for_fio = State()
+    waiting_for_fio_and_amount = State()  # Добавляем новое состояние
 from urllib.parse import quote
 
 if sys.platform == "linux":
@@ -996,24 +1001,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
 
-from aiogram import F
-
-@dp.callback_query(F.data == "payment_confirmation")
-async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
-    """Обработчик подтверждения оплаты"""
-    try:
-        await bot.send_message(
-            callback_query.from_user.id,
-            "📝 Пожалуйста, введите ваше <b>ФИО</b> для подтверждения оплаты:",
-            parse_mode="HTML"
-        )
-        await state.set_state(PaymentFSM.waiting_for_fio)
-        await callback_query.answer()
-    except Exception as e:
-        logger.error(f"Error in payment_confirmation_handler: {e}")
-        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
-        await callback_query.answer()
-
 
 @dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
@@ -1213,20 +1200,11 @@ async def pay_qr_handler(callback_query: types.CallbackQuery):
 async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
     """Обработчик подтверждения оплаты"""
     try:
-        user_id = callback_query.from_user.id
-        
-        # Проверяем баланс пользователя
-        user_row = await supabase_api.get_user_row(user_id)
-        if user_row and float(user_row.get(AMOUNT_FIELD, 0)) > 0:
-            await callback_query.message.answer("✅ Ваш баланс уже пополнен. Можете начинать примерку!")
-            await state.clear()
-            return
-            
         await bot.send_message(
-            user_id,
+            callback_query.from_user.id,
             "📝 Пожалуйста, введите ваше <b>ФИО</b> и <b>сумму платежа</b> в формате:\n"
             "<code>ФИО Сумма</code>\n\n"
-            "Например: <code>Иванов Иван Иванович 60</code>",
+            "Пример: <code>Иванов Иван Иванович 60</code>",
             parse_mode="HTML"
         )
         await state.set_state(PaymentFSM.waiting_for_fio_and_amount)
@@ -1237,18 +1215,20 @@ async def payment_confirmation_handler(callback_query: types.CallbackQuery, stat
         await callback_query.answer()
 
 @dp.message(PaymentFSM.waiting_for_fio_and_amount, F.text)
-async def process_fio_and_amount_input(message: types.Message, state: FSMContext):
+async def process_fio_and_amount(message: types.Message, state: FSMContext):
     try:
         user = message.from_user
         input_text = message.text.strip()
         
-        # Парсим ввод
+        # Разделяем ФИО и сумму
         parts = input_text.rsplit(' ', 1)
         if len(parts) != 2:
             await message.answer("⚠️ Неверный формат. Введите ФИО и сумму через пробел.\nПример: <code>Иванов Иван Иванович 60</code>", parse_mode="HTML")
             return
             
         fio, amount_str = parts
+        
+        # Проверяем сумму
         try:
             amount = float(amount_str)
             if amount < 30:
@@ -1258,77 +1238,64 @@ async def process_fio_and_amount_input(message: types.Message, state: FSMContext
             await message.answer("⚠️ Сумма должна быть числом. Пример: <code>Иванов Иван Иванович 60</code>", parse_mode="HTML")
             return
 
-        # Получаем текущие данные пользователя
-        user_row = await supabase_api.get_user_row(user.id)
-        current_username = user_row.get('username', '') if user_row else (user.username or '')
-
-        # Обновляем запись в Supabase
-        updated = await supabase_api.upsert_row(
+        # Обновляем данные пользователя
+        await supabase_api.upsert_row(
             user.id,
-            current_username,
+            user.username or "",
             {
                 "fio": fio,
                 "payment_amount": amount,
-                "status": "Ожидает подтверждения оплаты",
-                "payment_confirmation": True,
-                "access_granted": False,
-                "tries_left": 0
+                "status": "Ожидает подтверждения",
+                "payment_confirmation": True
             }
         )
 
-        if not updated:
-            raise Exception("Не удалось обновить данные пользователя")
-
         # Уведомление администратору
         if ADMIN_CHAT_ID:
-            admin_message = (
-                f"💰 <b>Подтверждение оплаты</b>\n\n"
-                f"👤 Пользователь: @{user.username or 'без username'} ({user.id})\n"
-                f"📛 ФИО: {fio}\n"
-                f"💳 Сумма: {amount} руб.\n"
-                f"📬 Имя в Telegram: {user.full_name}\n\n"
-                f"⚠️ Требуется проверить оплату и обновить баланс.\n\n"
-                f"Для подтверждения используйте команду:\n"
-                f"<code>/confirm_payment {user.id} {amount}</code>"
-            )
             await bot.send_message(
                 ADMIN_CHAT_ID,
-                admin_message,
-                parse_mode=ParseMode.HTML
+                f"💰 Новое подтверждение оплаты\n\n"
+                f"👤 Пользователь: @{user.username or 'нет'} ({user.id})\n"
+                f"📛 ФИО: {fio}\n"
+                f"💳 Сумма: {amount} руб.\n\n"
+                f"Для подтверждения используйте команду:\n"
+                f"<code>/confirm_payment {user.id} {amount}</code>",
+                parse_mode="HTML"
             )
 
         await message.answer(
-            "✅ Спасибо! Ваши данные и сумма платежа получены.\n\n"
-            "Администратор проверит платёж и откроет доступ в ближайшее время.\n"
-            "Вы получите уведомление, как только баланс будет пополнен.\n\n"
-            "Если у вас есть вопросы, свяжитесь с поддержкой."
+            "✅ Ваши данные и сумма платежа получены!\n\n"
+            "Администратор проверит платёж и откроет доступ.\n"
+            "Вы получите уведомление, когда баланс будет пополнен."
         )
         await state.clear()
 
     except Exception as e:
-        logger.error(f"Ошибка при обработке ФИО и суммы: {e}")
-        await message.answer("❌ Произошла ошибка. Попробуйте позже или свяжитесь с поддержкой.")
+        logger.error(f"Ошибка обработки ФИО и суммы: {e}")
+        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
         await state.clear()
 		
 @dp.message(Command("confirm_payment"))
-async def confirm_payment_handler(message: types.Message):
-    """Подтверждение оплаты администратором"""
+async def confirm_payment_cmd(message: types.Message):
+    """Подтверждение платежа администратором"""
     if str(message.from_user.id) != ADMIN_CHAT_ID:
-        return
-        
+        return await message.answer("⛔ Доступ запрещен")
+
     try:
         _, user_id_str, amount_str = message.text.split()
         user_id = int(user_id_str)
         amount = float(amount_str)
         
-        # Обновляем баланс пользователя
-        tries_left = int(amount / PRICE_PER_TRY)
+        # Рассчитываем количество примерок
+        tries = int(amount // PRICE_PER_TRY)
+        
+        # Обновляем баланс
         await supabase_api.upsert_row(
             user_id,
             "",
             {
                 "payment_amount": amount,
-                "tries_left": tries_left,
+                "tries_left": tries,
                 "access_granted": True,
                 "status": "Оплачено",
                 "payment_confirmation": False
@@ -1338,16 +1305,15 @@ async def confirm_payment_handler(message: types.Message):
         # Уведомляем пользователя
         await bot.send_message(
             user_id,
-            f"🎉 Ваш баланс пополнен на {amount} руб.! Доступно {tries_left} примерок.\n\n"
+            f"🎉 Ваш баланс пополнен на {amount} руб.! Доступно {tries} примерок.\n\n"
             "Теперь вы можете продолжить примерку!"
         )
         
-        await message.answer(f"✅ Баланс пользователя {user_id} успешно пополнен на {amount} руб.")
-        
+        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount} руб. ({tries} примерок)")
+
     except Exception as e:
         logger.error(f"Ошибка подтверждения платежа: {e}")
-        await message.answer("❌ Ошибка. Используйте: /confirm_payment user_id amount")
-
+        await message.answer("❌ Используйте: /confirm_payment user_id amount")
 
 @dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
