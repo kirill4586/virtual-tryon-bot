@@ -1260,31 +1260,7 @@ async def payment_confirmation_handler(callback_query: types.CallbackQuery):
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
         await callback_query.answer()
 
-@dp.message(F.text & ~F.text.startswith('/'))
-async def handle_fio(message: types.Message):
-    """Обработчик ввода ФИО после подтверждения оплаты"""
-    try:
-        user = message.from_user
-        fio = message.text
-        
-        # Отправляем уведомление администратору
-        if ADMIN_CHAT_ID:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                f"💰 Подтверждение оплаты\n\n"
-                f"👤 Пользователь: @{user.username} ({user.id})\n"
-                f"📛 ФИО: {fio}\n"
-                f"🆔 ID: {user.id}\n"
-                f"👤 Имя в Telegram: {user.full_name}"
-            )
-        
-        await bot.send_message(
-            message.chat.id,
-            "✅ Ваши данные получены. Администратор проверит оплату и начислит баланс в ближайшее время."
-        )
-    except Exception as e:
-        logger.error(f"Error handling FIO: {e}")
-        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
+
 
 @dp.callback_query(F.data == "check_balance")
 async def check_balance_handler(callback_query: types.CallbackQuery):
