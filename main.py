@@ -9,7 +9,6 @@ from aiogram import Bot, Dispatcher, F, types, BaseMiddleware
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
-from states import PaymentFSM
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
     Message,
@@ -26,10 +25,9 @@ from aiohttp import web
 from supabase.lib.client_options import ClientOptions
 from aiogram.fsm.state import StatesGroup, State
 
+# Определение состояний для FSM
 class PaymentFSM(StatesGroup):
-    waiting_for_fio = State()
-    waiting_for_fio_and_amount = State()  # Добавляем новое состояние
-from urllib.parse import quote
+    waiting_for_fio_and_amount = State()
 
 if sys.platform == "linux":
     import fcntl
@@ -62,15 +60,15 @@ PRICE_PER_TRY = 30  # Цена за одну примерку в рублях
 UPLOAD_DIR = "uploads"
 MODELS_BUCKET = "models"
 EXAMPLES_BUCKET = "primery"
-UPLOADS_BUCKET = "uploads"  # Бакет для загружаемых файлов
+UPLOADS_BUCKET = "uploads"
 SUPPORTED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
 MODELS_PER_PAGE = 3
 EXAMPLES_PER_PAGE = 3
 PORT = int(os.getenv("PORT", 4000))
 
 # Настройки ЮMoney
-YOO_MONEY_WALLET = "4100118533855458"  # Номер кошелька ЮMoney
-YOO_MONEY_PHONE = "77055412709"  # Номер телефона для СБП
+YOO_MONEY_WALLET = "4100118533855458"
+YOO_MONEY_PHONE = "77055412709"
 YOO_MONEY_CARD_LINK = "https://donate.stream/yoomoney4100118533855458?nickname=@{user.username}"
 YOO_MONEY_SBP_LINK = "https://yoomoney.ru/prepaid?w=sbpme2me"
 
@@ -114,7 +112,7 @@ models_cache = {
 }
 CACHE_EXPIRATION = 300  # 5 минут
 
-# Инициализация Supabase с настройками для реального времени
+# Инициализация Supabase
 try:
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY, options=client_options)
     logger.info("Supabase client initialized successfully")
@@ -148,8 +146,8 @@ except Exception as e:
 class SupabaseAPI:
     def __init__(self):
         self.supabase = supabase
-        self.last_payment_amounts = {}  # Кэш последних значений платежей
-        self.last_tries_values = {}     # Кэш последних значений примерок
+        self.last_payment_amounts = {}
+        self.last_tries_values = {}
 
     async def get_user_row(self, user_id: int):
         """Получение данных пользователя из Supabase"""
@@ -190,7 +188,6 @@ class SupabaseAPI:
             tries_left = int(row.get(TRIES_FIELD, 0)) if row.get(TRIES_FIELD) else 0
             free_tries_used = bool(row.get(FREE_TRIES_FIELD, False))
 
-            # Если есть оплата, но доступ не предоставлен - предоставляем доступ
             if payment_amount > 0 and not row.get(ACCESS_FIELD, False):
                 tries_left = int(payment_amount / PRICE_PER_TRY)
                 await self.update_user_row(user_id, {
@@ -200,7 +197,6 @@ class SupabaseAPI:
                 })
                 return tries_left
 
-            # Проверяем бесплатные попытки
             if not free_tries_used and payment_amount == 0:
                 await self.update_user_row(user_id, {
                     ACCESS_FIELD: True,
@@ -239,7 +235,6 @@ class SupabaseAPI:
 
             new_tries = max(0, tries_left - 1)
             
-            # Для бесплатной проверки не вычитаем сумму
             if free_tries_used and amount == 0 and tries_left == 1:
                 new_amount = 0.0
             else:
@@ -257,7 +252,6 @@ class SupabaseAPI:
 
             updated = await self.update_user_row(user_id, update_data)
             
-            # Отправляем уведомления о списании
             if updated:
                 await self.send_payment_update_notifications(user_id, new_amount, new_tries, "Списание за примерку")
             
@@ -270,14 +264,12 @@ class SupabaseAPI:
     async def send_payment_update_notifications(self, user_id: int, new_amount: float, new_tries: int, reason: str):
         """Отправляет уведомления об изменении баланса"""
         try:
-            # Получаем данные пользователя
             user_row = await self.get_user_row(user_id)
             if not user_row:
                 return
 
             username = user_row.get('username', '')
             
-            # Уведомление пользователю
             try:
                 await bot.send_message(
                     user_id,
@@ -289,7 +281,6 @@ class SupabaseAPI:
             except Exception as e:
                 logger.error(f"Error sending payment update to user: {e}")
 
-            # Уведомление администратору
             if ADMIN_CHAT_ID:
                 try:
                     await bot.send_message(
@@ -328,16 +319,13 @@ class SupabaseAPI:
                     .execute()
                 result = res.data[0] if res.data else None
             
-            # Проверяем, была ли изменена сумма оплаты
             if 'payment_amount' in data and data['payment_amount'] > 0:
                 payment_amount = data['payment_amount']
                 tries_left = int(payment_amount / PRICE_PER_TRY)
                 
-                # Обновляем кэш
                 self.last_payment_amounts[user_id] = payment_amount
                 self.last_tries_values[user_id] = tries_left
                 
-                # Отправляем уведомления
                 await self.send_payment_update_notifications(
                     user_id, 
                     payment_amount, 
@@ -345,12 +333,11 @@ class SupabaseAPI:
                     "Пополнение баланса"
                 )
                 
-                # Обновляем доступ и количество попыток
                 await self.update_user_row(user_id, {
                     ACCESS_FIELD: True,
                     TRIES_FIELD: tries_left,
                     STATUS_FIELD: "Оплачено",
-                    FREE_TRIES_FIELD: True  # Помечаем, что бесплатная проверка использована
+                    FREE_TRIES_FIELD: True
                 })
             
             return result
@@ -373,10 +360,8 @@ class SupabaseAPI:
     async def initialize_user(self, user_id: int, username: str):
         """Инициализирует пользователя в базе данных без начального баланса"""
         try:
-            # Проверяем, есть ли уже пользователь в базе
             user_row = await self.get_user_row(user_id)
             
-            # Если пользователя нет, создаем запись с нулевым балансом
             if not user_row:
                 await self.upsert_row(user_id, username, {
                     AMOUNT_FIELD: 0.0,
@@ -517,7 +502,6 @@ async def get_examples_list():
             if any(file['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS)
         ]
         
-        # Сортируем файлы по имени, чтобы порядок был последовательным
         examples.sort()
         
         logger.info(f"Found {len(examples)} examples")
@@ -553,10 +537,8 @@ async def send_examples_page(chat_id: int, page: int = 0):
                 continue
         
         if media:
-            # Отправляем медиагруппу
             await bot.send_media_group(chat_id, media=media)
             
-            # Создаем клавиатуру для навигации
             keyboard_buttons = []
             
             if end_idx < len(examples):
@@ -586,7 +568,6 @@ async def get_models_list(category: str):
         logger.warning("Supabase client not available")
         return []
     
-    # Проверяем кеш
     current_time = time.time()
     if (current_time - models_cache[category]["time"]) < CACHE_EXPIRATION:
         logger.info(f"Using cached models for {category}")
@@ -605,7 +586,6 @@ async def get_models_list(category: str):
             if any(file['name'].lower().endswith(ext) for ext in SUPPORTED_EXTENSIONS)
         ]
         
-        # Обновляем кеш
         models_cache[category] = {
             "time": current_time,
             "data": models
@@ -631,10 +611,8 @@ async def notify_admin(message: str):
 async def send_welcome(user_id: int, username: str, full_name: str):
     """Отправка приветственного сообщения"""
     try:
-        # Инициализируем пользователя (если нужно)
         await supabase_api.initialize_user(user_id, username)
         
-        # Отправляем первые три примера
         await send_initial_examples(user_id)
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -657,7 +635,6 @@ async def send_welcome(user_id: int, username: str, full_name: str):
         
         await supabase_api.reset_flags(user_id)
         
-        # Получаем текущее количество попыток
         tries_left = await get_user_tries(user_id)
         
         await supabase_api.upsert_row(user_id, username, {
@@ -822,7 +799,6 @@ async def model_selected(callback_query: types.CallbackQuery):
     """Обработчик выбора конкретной модели"""
     user_id = callback_query.from_user.id
 
-    # Проверяем количество оставшихся примерок
     tries_left = await get_user_tries(user_id)
     if tries_left <= 0:
         await show_payment_options(callback_query.from_user)
@@ -836,11 +812,9 @@ async def model_selected(callback_query: types.CallbackQuery):
             logger.warning("Callback query expired for processing check")
         return
 
-    # Выделяем путь модели и имя файла
     model_path = callback_query.data.replace("model_", "")
     category, model_name = model_path.split('/')
 
-    # Загружаем файл модели из Supabase и сохраняем как photo_2.jpg
     try:
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
         os.makedirs(user_dir, exist_ok=True)
@@ -852,7 +826,6 @@ async def model_selected(callback_query: types.CallbackQuery):
 
         logger.info(f"✅ Модель {model_name} загружена и сохранена как photo_2.jpg для пользователя {user_id}")
 
-        # Показываем превью модели
         model_preview = FSInputFile(model_local_path)
         await bot.send_photo(
             chat_id=user_id,
@@ -860,7 +833,6 @@ async def model_selected(callback_query: types.CallbackQuery):
             caption="📸 Вы выбрали эту модель для примерки."
         )
 
-        # Загружаем файл модели как photo_2 в Supabase
         await upload_to_supabase(model_local_path, user_id, "photos")
         await supabase_api.upsert_row(user_id, callback_query.from_user.username or "", {
             "photo1_received": True,
@@ -927,13 +899,11 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         user_dir = os.path.join(UPLOAD_DIR, str(user_id))
         os.makedirs(user_dir, exist_ok=True)
 
-        # Получаем файл фотографии
-        photo = message.photo[-1]  # Берем фото наибольшего размера
+        photo = message.photo[-1]
         file_id = photo.file_id
         file = await bot.get_file(file_id)
         file_path = file.file_path
 
-        # Проверяем Supabase напрямую
         try:
             supabase_files = supabase.storage.from_(UPLOADS_BUCKET).list(f"{user_id}/photos")
             existing = [f['name'] for f in supabase_files]
@@ -961,24 +931,20 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
             await message.answer("❗ Вы уже загрузили оба фото. Ожидайте результат.")
             return
             
-        # Сохраняем фото локально
         local_path = os.path.join(user_dir, filename)
         await bot.download_file(file_path, local_path)
 
-        # Загружаем фото в Supabase
         await upload_to_supabase(local_path, user_id, "photos")
 
-        # Получаем текущие данные пользователя, чтобы сохранить username
         user_row = await supabase_api.get_user_row(user_id)
         current_username = user_row.get('username', '') if user_row else (user.username or '')
 
-        # Обновляем статус в базе данных, сохраняя username
         if photo_type == 1:
             await supabase_api.upsert_row(user_id, current_username, {
                 "photo1_received": True,
                 "photo2_received": False,
                 "status": "Ожидается фото человека",
-                "username": current_username  # Явно сохраняем username
+                "username": current_username
             })
         else:
             await supabase_api.upsert_row(user_id, current_username, {
@@ -986,7 +952,7 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
                 "photo2_received": True,
                 "status": "В обработке",
                 "last_try_date": time.strftime("%Y-%m-%d %H:%M:%S"),
-                "username": current_username  # Явно сохраняем username
+                "username": current_username
             })
 
             await supabase_api.decrement_tries(user_id)
@@ -1000,7 +966,6 @@ async def process_photo(message: types.Message, user: types.User, user_dir: str)
         logger.error(f"Error processing photo: {e}")
         await message.answer("❌ Ошибка при обработке фото. Попробуйте ещё раз.")
         raise
-
 
 @dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
@@ -1040,7 +1005,6 @@ async def handle_photo(message: types.Message):
 async def show_balance_info(user: types.User):
     """Показывает информацию о балансе пользователя"""
     try:
-        # Получаем данные пользователя из Supabase
         user_row = await supabase_api.get_user_row(user.id)
         
         if not user_row:
@@ -1077,12 +1041,11 @@ async def show_balance_info(user: types.User):
 async def show_payment_options(user: types.User):
     """Показывает варианты оплаты через ЮMoney"""
     try:
-        # Создаем клавиатуру с кнопками оплаты
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить картой (минималка 60 рублей)", 
-                    url=YOO_MONEY_CARD_LINK
+                    url=YOO_MONEY_CARD_LINK.format(user=user)
                 )
             ],
             [
@@ -1090,12 +1053,12 @@ async def show_payment_options(user: types.User):
                     text="📱 Оплатить СБП", 
                     callback_data="pay_sbp"
                 )
-			],
+            ],
             [
                 InlineKeyboardButton(
                     text="💳 Оплатить по QR", 
                     callback_data="pay_qr"
-                )	
+                )    
             ],
             [
                 InlineKeyboardButton(
@@ -1133,7 +1096,7 @@ async def show_payment_options(user: types.User):
             "2️⃣ Введите сумму кратно 30 рублям (30, 60, 90 и т.д.)\n\n"
             "3️⃣ <b>Обязательно укажите в комментарии к платежу:</b>\n\n"
             "👇👇👇👇👇👇👇👇👇👇\n"
-            f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username}</code>\n\n"
+            f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username or 'ваш_ник'}</code>\n\n"
             "<b>Просто нажмите на это сообщение, оно скопируется и вставьте его в поле для комментария</b>\n\n"
             "<b>🤷‍♂️Иначе не будет понятно кому начислять баланс.</b>\n"
             "‼️<b>Ничего не меняйте в сообщении‼️</b>\n\n"
@@ -1147,7 +1110,6 @@ async def show_payment_options(user: types.User):
             parse_mode=ParseMode.HTML
         )
         
-        # Уведомление администратору о начале оплаты
         if ADMIN_CHAT_ID:
             try:
                 await bot.send_message(
@@ -1164,27 +1126,26 @@ async def show_payment_options(user: types.User):
             user.id,
             "❌ Ошибка при формировании ссылки оплаты. Пожалуйста, свяжитесь с администратором."
         )
-from aiogram.types import FSInputFile
 
 @dp.callback_query(F.data == "pay_qr")
 async def pay_qr_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки оплаты по QR-коду"""
     user = callback_query.from_user
-    qr_image = "https://jikkylblsmeuhbsewbkz.supabase.co/storage/v1/object/public/qr/yoomoney_qr.png"  # путь к сохранённому QR-коду
+    qr_image = "https://jikkylblsmeuhbsewbkz.supabase.co/storage/v1/object/public/qr/yoomoney_qr.png"
 
     caption = (
-    "📲 <b>Как оплатить по QR-коду:</b>\n\n"
-    "1️⃣ Откройте приложение вашего банка\n"
-    "2️⃣ Перейдите в раздел «СБП» или «Сканировать QR»\n"
-    "3️⃣ Отсканируйте этот код\n\n"
-    "💰 Введите сумму (например, 30 ₽)\n\n"
-    "‼️💬 <b>ОБЯЗАТЕЛЬНО в комментарии к оплате вставьте:</b>\n"
-    f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username or 'ваш_ник'}</code>\n"
-    "🔹 <i>Нажмите, чтобы скопировать</i>\n\n"
-    "📌 <b>Если вы открыли бот на телефоне:</b>\n"
-    "Сохраните изображение, откройте его на другом устройстве и отсканируйте QR\n\n"
-    "🔁 После перевода — нажмите кнопку «Я оплатил» и введите ФИО"
-)
-
+        "📲 <b>Как оплатить по QR-коду:</b>\n\n"
+        "1️⃣ Откройте приложение вашего банка\n"
+        "2️⃣ Перейдите в раздел «СБП» или «Сканировать QR»\n"
+        "3️⃣ Отсканируйте этот код\n\n"
+        "💰 Введите сумму (например, 30 ₽)\n\n"
+        "‼️💬 <b>ОБЯЗАТЕЛЬНО в комментарии к оплате вставьте:</b>\n"
+        f"<code>ОПЛАТА ЗА ПРИМЕРКИ от @{user.username or 'ваш_ник'}</code>\n"
+        "🔹 <i>Нажмите, чтобы скопировать</i>\n\n"
+        "📌 <b>Если вы открыли бот на телефоне:</b>\n"
+        "Сохраните изображение, откройте его на другом устройстве и отсканируйте QR\n\n"
+        "🔁 После перевода — нажмите кнопку «Я оплатил» и введите ФИО"
+    )
 
     await bot.send_photo(
         chat_id=callback_query.from_user.id,
@@ -1192,14 +1153,13 @@ async def pay_qr_handler(callback_query: types.CallbackQuery):
         caption=caption,
         parse_mode=ParseMode.HTML
     )
-
     await callback_query.answer()
-
 
 @dp.callback_query(F.data == "payment_confirmation")
 async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
     """Обработчик подтверждения оплаты"""
     try:
+        await state.set_data({"user_id": callback_query.from_user.id})
         await bot.send_message(
             callback_query.from_user.id,
             "📝 Пожалуйста, введите ваше <b>ФИО</b> и <b>сумму платежа</b> в формате:\n"
@@ -1216,11 +1176,13 @@ async def payment_confirmation_handler(callback_query: types.CallbackQuery, stat
 
 @dp.message(PaymentFSM.waiting_for_fio_and_amount, F.text)
 async def process_fio_and_amount(message: types.Message, state: FSMContext):
+    """Обработка введенных ФИО и суммы платежа"""
     try:
+        user_data = await state.get_data()
+        user_id = user_data.get("user_id", message.from_user.id)
         user = message.from_user
         input_text = message.text.strip()
         
-        # Разделяем ФИО и сумму
         parts = input_text.rsplit(' ', 1)
         if len(parts) != 2:
             await message.answer("⚠️ Неверный формат. Введите ФИО и сумму через пробел.\nПример: <code>Иванов Иван Иванович 60</code>", parse_mode="HTML")
@@ -1228,7 +1190,6 @@ async def process_fio_and_amount(message: types.Message, state: FSMContext):
             
         fio, amount_str = parts
         
-        # Проверяем сумму
         try:
             amount = float(amount_str)
             if amount < 30:
@@ -1238,7 +1199,6 @@ async def process_fio_and_amount(message: types.Message, state: FSMContext):
             await message.answer("⚠️ Сумма должна быть числом. Пример: <code>Иванов Иван Иванович 60</code>", parse_mode="HTML")
             return
 
-        # Обновляем данные пользователя
         await supabase_api.upsert_row(
             user.id,
             user.username or "",
@@ -1246,35 +1206,39 @@ async def process_fio_and_amount(message: types.Message, state: FSMContext):
                 "fio": fio,
                 "payment_amount": amount,
                 "status": "Ожидает подтверждения",
-                "payment_confirmation": True
+                "payment_confirmation": True,
+                "username": user.username or ""
             }
         )
 
-        # Уведомление администратору
         if ADMIN_CHAT_ID:
-            await bot.send_message(
-                ADMIN_CHAT_ID,
-                f"💰 Новое подтверждение оплаты\n\n"
-                f"👤 Пользователь: @{user.username or 'нет'} ({user.id})\n"
-                f"📛 ФИО: {fio}\n"
-                f"💳 Сумма: {amount} руб.\n\n"
-                f"Для подтверждения используйте команду:\n"
-                f"<code>/confirm_payment {user.id} {amount}</code>",
-                parse_mode="HTML"
-            )
+            try:
+                await bot.send_message(
+                    ADMIN_CHAT_ID,
+                    f"💰 Новое подтверждение оплаты\n\n"
+                    f"👤 Пользователь: @{user.username or 'нет'} ({user.id})\n"
+                    f"📛 ФИО: {fio}\n"
+                    f"💳 Сумма: {amount} руб.\n\n"
+                    f"Для подтверждения используйте команду:\n"
+                    f"<code>/confirm_payment {user.id} {amount}</code>",
+                    parse_mode="HTML"
+                )
+            except Exception as admin_error:
+                logger.error(f"Error sending admin notification: {admin_error}")
 
         await message.answer(
             "✅ Ваши данные и сумма платежа получены!\n\n"
             "Администратор проверит платёж и откроет доступ.\n"
-            "Вы получите уведомление, когда баланс будет пополнен."
+            "Вы получите уведомление, когда баланс будет пополнен.\n\n"
+            "Обычно это занимает не более 15 минут."
         )
         await state.clear()
 
     except Exception as e:
-        logger.error(f"Ошибка обработки ФИО и суммы: {e}")
+        logger.error(f"Ошибка обработки ФИО и суммы: {e}", exc_info=True)
         await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
         await state.clear()
-		
+
 @dp.message(Command("confirm_payment"))
 async def confirm_payment_cmd(message: types.Message):
     """Подтверждение платежа администратором"""
@@ -1286,13 +1250,18 @@ async def confirm_payment_cmd(message: types.Message):
         user_id = int(user_id_str)
         amount = float(amount_str)
         
-        # Рассчитываем количество примерок
         tries = int(amount // PRICE_PER_TRY)
         
-        # Обновляем баланс
+        user_row = await supabase_api.get_user_row(user_id)
+        if not user_row:
+            return await message.answer("❌ Пользователь не найден")
+            
+        fio = user_row.get('fio', 'Не указано')
+        username = user_row.get('username', 'Не указано')
+        
         await supabase_api.upsert_row(
             user_id,
-            "",
+            username,
             {
                 "payment_amount": amount,
                 "tries_left": tries,
@@ -1302,17 +1271,26 @@ async def confirm_payment_cmd(message: types.Message):
             }
         )
         
-        # Уведомляем пользователя
-        await bot.send_message(
-            user_id,
-            f"🎉 Ваш баланс пополнен на {amount} руб.! Доступно {tries} примерок.\n\n"
-            "Теперь вы можете продолжить примерку!"
+        try:
+            await bot.send_message(
+                user_id,
+                f"🎉 Ваш баланс пополнен на {amount} руб.! Доступно {tries} примерок.\n\n"
+                f"📛 Ваше ФИО: {fio}\n"
+                "Теперь вы можете продолжить примерку!"
+            )
+        except Exception as user_notify_error:
+            logger.error(f"Error notifying user: {user_notify_error}")
+            await message.answer(f"✅ Баланс обновлён, но не удалось уведомить пользователя: {user_notify_error}")
+            return
+            
+        await message.answer(
+            f"✅ Баланс пользователя {user_id} пополнен на {amount} руб. ({tries} примерок)\n"
+            f"👤 @{username}\n"
+            f"📛 ФИО: {fio}"
         )
-        
-        await message.answer(f"✅ Баланс пользователя {user_id} пополнен на {amount} руб. ({tries} примерок)")
 
     except Exception as e:
-        logger.error(f"Ошибка подтверждения платежа: {e}")
+        logger.error(f"Ошибка подтверждения платежа: {e}", exc_info=True)
         await message.answer("❌ Используйте: /confirm_payment user_id amount")
 
 @dp.callback_query(F.data == "check_balance")
@@ -1423,8 +1401,10 @@ async def check_results():
         except Exception as e:
             logger.error(f"❌ Ошибка в check_results(): {e}")
             await asyncio.sleep(30)
+
 @dp.callback_query(F.data == "pay_sbp")
 async def pay_sbp_handler(callback_query: types.CallbackQuery):
+    """Обработчик кнопки оплаты через СБП"""
     user = callback_query.from_user
     sbp_instructions = f"""📲 <b>Инструкция по оплате через СБП на ЮMoney:</b>
 
@@ -1455,15 +1435,12 @@ async def pay_sbp_handler(callback_query: types.CallbackQuery):
     await callback_query.message.answer(sbp_instructions, parse_mode=ParseMode.HTML)
     await callback_query.answer()
 
-			
-
 @dp.callback_query(F.data == "continue_tryon")
 async def continue_tryon_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки продолжения примерки"""
     try:
         user_id = callback_query.from_user.id
 
-        # Удаляем старые фото из Supabase
         try:
             supabase.storage.from_(UPLOADS_BUCKET).remove([
                 f"{user_id}/photos/photo_1.jpg",
@@ -1473,9 +1450,7 @@ async def continue_tryon_handler(callback_query: types.CallbackQuery):
         except Exception as e:
             logger.warning(f"⚠️ Не удалось удалить старые фото для {user_id}: {e}")
 
-        # Сбрасываем флаги и запускаем новый сценарий
         await supabase_api.reset_flags(user_id)
-        # Удаляем локальные файлы
         try:
             user_dir = os.path.join(UPLOAD_DIR, str(user_id))
             if os.path.exists(user_dir):
@@ -1515,7 +1490,6 @@ async def monitor_payment_changes_task():
     logger.info("Starting payment amount monitoring task...")
     while True:
         try:
-            # Получаем всех пользователей из базы данных
             res = supabase.table(USERS_TABLE)\
                 .select("user_id, payment_amount, username")\
                 .execute()
@@ -1523,34 +1497,28 @@ async def monitor_payment_changes_task():
             current_payments = {int(user['user_id']): float(user['payment_amount']) 
                               for user in res.data if user.get('payment_amount')}
             
-            # Сравниваем с предыдущими значениями
             for user_id, current_amount in current_payments.items():
                 previous_amount = supabase_api.last_payment_amounts.get(user_id, 0)
                 
                 if current_amount != previous_amount:
-                    # Рассчитываем количество примерок
                     tries_left = int(current_amount / PRICE_PER_TRY)
                     
-                    # Обновляем кэш
                     supabase_api.last_payment_amounts[user_id] = current_amount
                     supabase_api.last_tries_values[user_id] = tries_left
                     
-                    # Получаем данные пользователя
                     user_row = await supabase_api.get_user_row(user_id)
                     if not user_row:
                         continue
                     
                     username = user_row.get('username', '') if user_row.get('username') else ''
                     
-                    # Обновляем доступ и количество попыток
                     await supabase_api.update_user_row(user_id, {
                         ACCESS_FIELD: True if current_amount > 0 else False,
                         TRIES_FIELD: tries_left,
                         STATUS_FIELD: "Оплачено" if current_amount > 0 else "Не оплачено",
-                        FREE_TRIES_FIELD: True  # Помечаем, что бесплатная проверка использована
+                        FREE_TRIES_FIELD: True
                     })
                     
-                    # Отправляем уведомления
                     await supabase_api.send_payment_update_notifications(
                         user_id,
                         current_amount,
@@ -1558,11 +1526,11 @@ async def monitor_payment_changes_task():
                         "Изменение баланса"
                     )
             
-            await asyncio.sleep(5)  # Проверяем каждые 10 секунд
+            await asyncio.sleep(5)
             
         except Exception as e:
             logger.error(f"Error in payment monitoring task: {e}")
-            await asyncio.sleep(3)  # При ошибке ждем дольше
+            await asyncio.sleep(3)
 
 async def handle(request):
     """Обработчик корневого запроса"""
@@ -1605,10 +1573,8 @@ async def main():
     try:
         logger.info("Starting bot...")
         
-        # Запуск веб-сервера
         await start_web_server()
         
-        # Установка вебхука
         webhook_url = f"https://virtual-tryon-bot-3n0o.onrender.com/{BOT_TOKEN.split(':')[1]}"
         await bot.set_webhook(
             url=webhook_url,
@@ -1616,13 +1582,9 @@ async def main():
         )
         logger.info(f"Webhook set to: {webhook_url}")
         
-        # Запуск фоновой задачи проверки результатов
         asyncio.create_task(check_results())
-        
-        # Запуск мониторинга изменений payment_amount
         asyncio.create_task(monitor_payment_changes_task())
         
-        # Бесконечный цикл
         while True:
             await asyncio.sleep(3600)
             
@@ -1646,11 +1608,11 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
+
 @dp.message()
 async def fallback_handler(message: types.Message, state: FSMContext):
     current = await state.get_state()
     if current:
-        return  # FSM активно — не перехватываем сообщение
-
-    # Здесь может быть логика главного меню или дефолтное поведение
+        return
+        
     await message.answer("👋 Выберите действие из меню ниже.")
