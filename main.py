@@ -1239,7 +1239,7 @@ async def process_fio_input(message: types.Message, state: FSMContext):
     except Exception as e:
         logger.error(f"Error handling FIO: {e}")
         await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
-		await message.answer(f"📍 Текущее состояние FSM: {await state.get_state()}")
+        await message.answer(f"📍 Текущее состояние FSM: {await state.get_state()}")
         await state.clear()
 
 
