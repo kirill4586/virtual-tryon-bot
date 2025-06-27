@@ -1159,16 +1159,32 @@ async def pay_qr_handler(callback_query: types.CallbackQuery):
 async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
     """Обработчик подтверждения оплаты"""
     try:
-        await state.set_data({"user_id": callback_query.from_user.id})
+        user = callback_query.from_user
+        await state.set_data({"user_id": user.id})
+        
+        # Уведомление администратору
+        if ADMIN_CHAT_ID:
+            admin_message = (
+                f"💰 Пользователь нажал 'Я оплатил'\n\n"
+                f"👤 ID: {user.id}\n"
+                f"📛 Username: @{user.username if user.username else 'нет'}\n"
+                f"📝 Имя в Telegram: {user.full_name}\n\n"
+                f"Ожидает подтверждения платежа"
+            )
+            await bot.send_message(ADMIN_CHAT_ID, admin_message)
+        
+        # Уведомление клиенту
         await bot.send_message(
-            callback_query.from_user.id,
-            "📝 Пожалуйста, введите ваше <b>ФИО</b> и <b>сумму платежа</b> в формате:\n"
-            "<code>ФИО Сумма</code>\n\n"
-            "Пример: <code>Иванов Иван Иванович 60</code>",
-            parse_mode="HTML"
+            user.id,
+            "✅ Ваше подтверждение оплаты получено!\n\n"
+            "🔍 Ваш платёж проверяется администратором.\n"
+            "После проверки вам придёт уведомление о пополнении баланса,\n"
+            "и вы сможете продолжить примерки.\n\n"
+            "⏳ Обычно проверка занимает не более 15 минут."
         )
-        await state.set_state(PaymentFSM.waiting_for_fio_and_amount)
-        await callback_query.answer()
+        
+        await callback_query.answer("Ваше подтверждение оплаты получено!")
+        
     except Exception as e:
         logger.error(f"Error in payment_confirmation_handler: {e}")
         await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
