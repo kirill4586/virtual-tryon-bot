@@ -473,9 +473,9 @@ async def send_initial_examples(chat_id: int):
     """Отправляет первые три примера перед приветствием"""
     try:
         media = [
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1013DE2SDg8u0V69ePxTYki2WWSNaGWVi"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1010hYD1PjCQX-hZQAfRPigkLyz1PAaCH"),
-            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=104v4mW-4-HIH40RIg9-L86sTPWQsxCEF")
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1hogZoJybvTYBC_qGJOkvH9C_4RpbRQ--"),
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1LYrzAWX4k2BMjKgPzGiBohHn7EQ4wN25"),
+            InputMediaPhoto(media="https://drive.google.com/uc?export=download&id=1sB17QB1jwlDj9mYOnxOz8dVUwIJLbOb4")
         ]
         await bot.send_media_group(chat_id, media=media)
         logger.info(f"Примеры фото отправлены {chat_id}")
@@ -1092,7 +1092,7 @@ async def show_payment_options(user: types.User):
             f"- 60 руб = 2 примерки\n"
             f"- 90 руб = 3 примерки\n"
             "и так далее...\n\n"
-            "1️⃣ Выберите удобный способ оплаты (картой или через СБП)\n\n"
+            "1️⃣ Выберите удобный способ оплаты (картой,через СБП или по QR-коду)\n\n"
             "2️⃣ Введите сумму\n\n"
             "3️⃣ <b>Обязательно укажите в комментарии к платежу:</b>\n\n"
             "👇👇👇👇👇👇👇👇👇👇\n"
