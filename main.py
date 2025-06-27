@@ -1015,8 +1015,6 @@ async def payment_confirmation_handler(callback_query: types.CallbackQuery, stat
         await callback_query.answer()
 
 
-
-
 @dp.callback_query(F.data == "upload_person")
 async def upload_person_handler(callback_query: types.CallbackQuery):
     """Обработчик кнопки загрузки фото человека"""
@@ -1221,25 +1219,45 @@ async def process_fio_input(message: types.Message, state: FSMContext):
             await message.answer("⚠️ Вы отправили пустое ФИО. Пожалуйста, введите его текстом.")
             return
 
+        # Получаем текущие данные пользователя
+        user_row = await supabase_api.get_user_row(user.id)
+        current_username = user_row.get('username', '') if user_row else (user.username or '')
+
+        # Обновляем запись в Supabase, сохраняя ФИО
+        updated = await supabase_api.upsert_row(
+            user.id,
+            current_username,
+            {
+                "fio": fio,  # Сохраняем ФИО
+                "status": "Ожидает подтверждения оплаты",
+                "payment_confirmation": True
+            }
+        )
+
+        if not updated:
+            raise Exception("Не удалось обновить данные пользователя")
+
+        # Уведомление администратору
         if ADMIN_CHAT_ID:
             await bot.send_message(
                 ADMIN_CHAT_ID,
                 f"💰 Подтверждение оплаты\n\n"
                 f"👤 Пользователь: @{user.username or 'без username'} ({user.id})\n"
                 f"📛 ФИО: {fio}\n"
-                f"📬 Имя в Telegram: {user.full_name}"
+                f"📬 Имя в Telegram: {user.full_name}\n\n"
+                f"⚠️ Требуется проверить оплату и обновить баланс."
             )
 
         await message.answer(
-            "✅ Спасибо! Ваше ФИО получено.\n"
-            "Администратор проверит платёж и откроет доступ в ближайшее время."
+            "✅ Спасибо! Ваше ФИО и подтверждение оплаты получены.\n"
+            "Администратор проверит платёж и откроет доступ в ближайшее время.\n\n"
+            "Вы получите уведомление, как только баланс будет пополнен."
         )
         await state.clear()
 
     except Exception as e:
-        logger.error(f"Error handling FIO: {e}")
-        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
-        await message.answer(f"📍 Текущее состояние FSM: {await state.get_state()}")
+        logger.error(f"Ошибка при обработке ФИО: {e}")
+        await message.answer("❌ Произошла ошибка. Попробуйте позже или свяжитесь с поддержкой.")
         await state.clear()
 
 
