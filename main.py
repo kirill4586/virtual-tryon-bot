@@ -1588,7 +1588,7 @@ if __name__ == "__main__":
         loop.run_until_complete(on_shutdown())
         loop.close()
         logger.info("Bot successfully shut down")
-		@dp.message()
+@dp.message()
 async def fallback_handler(message: types.Message, state: FSMContext):
     current = await state.get_state()
     if current:
