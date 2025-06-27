@@ -1002,33 +1002,54 @@ async def payment_confirmation_handler(callback_query: types.CallbackQuery, stat
     await callback_query.answer()
 from aiogram import F
 
+@dp.callback_query(F.data == "payment_confirmation")
+async def payment_confirmation_handler(callback_query: types.CallbackQuery, state: FSMContext):
+    """Обработчик подтверждения оплаты"""
+    try:
+        await bot.send_message(
+            callback_query.from_user.id,
+            "📝 Пожалуйста, введите ваше <b>ФИО</b> для подтверждения оплаты:",
+            parse_mode="HTML"
+        )
+        await state.set_state(PaymentFSM.waiting_for_fio)
+        await callback_query.answer()
+    except Exception as e:
+        logger.error(f"Error in payment_confirmation_handler: {e}")
+        await callback_query.message.answer("⚠️ Ошибка при обработке запроса. Попробуйте позже.")
+        await callback_query.answer()
+
 @dp.message(PaymentFSM.waiting_for_fio, F.text)
 async def process_fio_input(message: types.Message, state: FSMContext):
-    fio = message.text.strip()
-    user = message.from_user
-
-    # Проверка: пользователь не оставил пустую строку
-    if not fio:
-        await message.answer("⚠️ Вы отправили пустое ФИО. Пожалуйста, введите его текстом.")
-        return
-
-    # Отправить админу уведомление
-    if ADMIN_CHAT_ID:
-        await bot.send_message(
-            ADMIN_CHAT_ID,
-            f"💰 Подтверждение оплаты\n\n"
-            f"👤 Пользователь: @{user.username or 'без username'} ({user.id})\n"
-            f"📛 ФИО: {fio}\n"
-            f"📬 Имя в Telegram: {user.full_name}"
+    """Обработчик ввода ФИО после подтверждения оплаты"""
+    try:
+        user = message.from_user
+        fio = message.text.strip()
+        
+        if not fio:
+            await message.answer("⚠️ Вы отправили пустое ФИО. Пожалуйста, введите его текстом.")
+            return
+        
+        # Отправляем уведомление администратору
+        if ADMIN_CHAT_ID:
+            await bot.send_message(
+                ADMIN_CHAT_ID,
+                f"💰 Подтверждение оплаты\n\n"
+                f"👤 Пользователь: @{user.username or 'без username'} ({user.id})\n"
+                f"📛 ФИО: {fio}\n"
+                f"📬 Имя в Telegram: {user.full_name}"
+            )
+        
+        await message.answer(
+            "✅ Спасибо! Ваше ФИО получено.\n"
+            "Администратор проверит платёж и откроет доступ в ближайшее время."
         )
-
-    # Поблагодарить пользователя
-    await message.answer(
-        "✅ Спасибо! Ваше ФИО получено.\n"
-        "Администратор проверит платёж и откроет доступ в ближайшее время."
-    )
-
-    await state.clear()
+        
+        await state.clear()
+        
+    except Exception as e:
+        logger.error(f"Error handling FIO: {e}")
+        await message.answer("❌ Ошибка при обработке данных. Попробуйте позже.")
+        await state.clear()
 
 
 
