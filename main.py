@@ -1392,30 +1392,30 @@ async def check_results():
                         ]
                     )
                     # ✅ Отправка результата
-               try:
-                   with open(result_path, "rb") as result_file:
-                       await bot.send_photo(user_id, result_file, caption="✨ Ваша примерка готова!")
-                       logger.info(f"✅ Отправлен результат пользователю {user_id}")
+                try:
+                    with open(result_path, "rb") as result_file:
+                        await bot.send_photo(user_id, result_file, caption="✨ Ваша примерка готова!")
+                        logger.info(f"✅ Отправлен результат пользователю {user_id}")
 
                   # 🧹 Сброс состояния пользователя, чтобы начать заново
-                  await supabase_api.update_user_row(user_id, {
-                      "file_1": None,
-                      "file_2": None,
-                      "status": None,
-                      "step": None,
-                      "awaiting_photo": False,
-                      "awaiting_clothes": False
-                 })
+                   await supabase_api.update_user_row(user_id, {
+                       "file_1": None,
+                       "file_2": None,
+                       "status": None,
+                       "step": None,
+                       "awaiting_photo": False,
+                       "awaiting_clothes": False
+                  })
 
                     # 🟢 Уведомление пользователю
-                 await bot.send_message(
-                     user_id,
+                  await bot.send_message(
+                      user_id,
                      "👕 Вы можете загрузить новое фото или одежду для следующей примерки. Просто отправьте файл — и начнём заново!"
-                 )
+                  )
 
-                except Exception as e:
-                    logger.error(f"❌ Ошибка отправки результата для {user_id}: {e}")
-                    continue
+                 except Exception as e:
+                     logger.error(f"❌ Ошибка отправки результата для {user_id}: {e}")
+                     continue
 
                 try:
                     supabase.storage.from_(UPLOADS_BUCKET).remove([
