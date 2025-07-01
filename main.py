@@ -1391,22 +1391,14 @@ async def check_results():
                             ]
                         ]
                     )
-                    # ✅ Отправка результата
-                
-                    await bot.send_photo(user_id, photo, caption="✨ Ваша примерка готова!")
-                    logger.info(f"✅ Отправлен результат пользователю {user_id}")
-
-                  # 🧹 Сброс состояния пользователя, чтобы начать заново
-                    await supabase_api.update_user_row(user_id, {
-                        "file_1": None,
-                        "file_2": None,
-                        "status": None,
-                        "step": None,
-                        "awaiting_photo": False,
-                        "awaiting_clothes": False
-                   })
-                except Exception as e:
-                    logger.error(f"❌ Ошибка отправки результата для {user_id}: {e}")
+                    await bot.send_photo(
+                        chat_id=user_id,
+                        photo=photo,
+                        caption="🎉 Ваша виртуальная примерка готова!",
+                        reply_markup=keyboard
+                    )
+                except Exception as send_error:
+                    logger.error(f"❌ Ошибка отправки результата для {user_id}: {send_error}")
                     continue
 
                 try:
